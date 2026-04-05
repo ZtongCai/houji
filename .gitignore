@@ -3,11 +3,11 @@ __pycache__/
 *.py[cod]
 *.pyo
 .env
-*.egg-info/
-dist/
-build/
-.venv/
-venv/
+.env.*
+*.env
+# 密钥文件（绝对不入 git）
+secrets.py
+
 
 # 运行时数据（不入库，通过 Samba 共享）
 brain/data/houji.db

@@ -1,30 +1,45 @@
 """
 串口通信桥接（Pi5 ↔ Pico）
-负责向 Pico 发送继电器控制指令，并接收确认回执
 指令协议（JSON Lines）：
   发送: {"cmd": "relay", "id": 1, "state": 1}
   接收: {"status": "ok", "id": 1}
 """
 import json
+import logging
 import serial
 from config import SERIAL_PORT, SERIAL_BAUD
+
+log = logging.getLogger("houji.serial")
 
 
 class SerialBridge:
     def __init__(self):
-        # TODO: Phase1 —— 初始化串口连接
         self.ser = None
+        self.connect()
 
     def connect(self):
-        self.ser = serial.Serial(SERIAL_PORT, SERIAL_BAUD, timeout=2)
+        """建立串口连接，失败时记录警告，不 exit"""
+        try:
+            self.ser = serial.Serial(SERIAL_PORT, SERIAL_BAUD, timeout=2)
+            log.info(f"[串口] 已连接 Pico ({SERIAL_PORT})")
+        except Exception as e:
+            log.warning(f"[串口] 连接失败，继电器暂时不可用: {e}")
+            self.ser = None
 
     def send_command(self, cmd: dict) -> dict | None:
-        """发送 JSON 指令，返回 Pico 回执"""
+        """发送 JSON 指令，返回 Pico 回执，失败时尝试重连一次"""
+        if not self.ser:
+            self.connect()
         if not self.ser:
             return None
-        self.ser.write((json.dumps(cmd) + "\n").encode())
-        raw = self.ser.readline().decode().strip()
-        return json.loads(raw) if raw else None
+        try:
+            self.ser.write((json.dumps(cmd) + "\n").encode())
+            raw = self.ser.readline().decode().strip()
+            return json.loads(raw) if raw else None
+        except Exception as e:
+            log.warning(f"[串口] 发送失败，尝试重连: {e}")
+            self.connect()
+            return None
 
     def close(self):
         if self.ser:

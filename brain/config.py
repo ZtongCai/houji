@@ -4,6 +4,10 @@
 """
 import os
 from pathlib import Path
+from dotenv import load_dotenv
+
+# 自动加载项目根目录的 .env 文件（brain/ 的上一层）
+load_dotenv(Path(__file__).parent.parent / ".env")
 
 # ── 项目根路径 ──────────────────────────────────────────
 BASE_DIR = Path(__file__).parent
@@ -27,9 +31,12 @@ SERIAL_PORT = "/dev/ttyACM0"   # Pico 连接的串口设备
 SERIAL_BAUD = 115200
 
 # ── Gemini API ───────────────────────────────────────────
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "AIzaSyBwR0m7zYgwfd_F_qlzU8G1ZW64wD2pf6w")
-GEMINI_FLASH_MODEL = "gemini-3-flash"
-GEMINI_PRO_MODEL   = "gemini-3.0-pro"
+# ⚠️ API Key 请通过环境变量注入，不要硬编码在此处
+# 在 Pi5 上执行: export GEMINI_API_KEY="your_new_key"
+# 或写入 ~/.bashrc 永久生效
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+GEMINI_FLASH_MODEL = "gemini-3-flash-preview"  # 最新 Flash 预览版
+GEMINI_PRO_MODEL   = "gemini-3-pro-preview"    # 最新 Pro 预览版
 
 # ── 采集与决策间隔（秒）─────────────────────────────────
 SENSOR_INTERVAL   = 60     # 传感器采集频率

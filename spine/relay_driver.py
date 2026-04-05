@@ -1,36 +1,53 @@
 # MicroPython 继电器驱动（运行在树莓派 Pico）
-# 继电器编号约定：1=补光灯 2=排气扇 3=蠕动泵
 from machine import Pin
 
-# 继电器编号 → GPIO 引脚映射（根据实际接线修改）
+# 微雪 (Waveshare) Pico-Relay-B 8路继电器针脚映射
+# 针脚定义: 第1路=GP21, 第2路=GP20, ... 第8路=GP14
+# 12V 和 220V 仍按照物理隔离的规则分配
 RELAY_PIN_MAP = {
-    1: 2,   # 补光灯 → GP2
-    2: 3,   # 排气扇  → GP3
-    3: 4,   # 蠕动泵  → GP4
+    1: 21,  # 12V: 营养液蠕动泵
+    2: 20,  # 12V: 进气风扇
+    3: 19,  # 12V: 出气风扇
+    4: 18,  # 空置/备用隔离带
+    5: 17,  # 空置/备用隔离带
+    6: 16,  # 空置/备用隔离带
+    7: 15,  # 220V: 打氧泵
+    8: 14,  # 220V: 补光灯
 }
 
+# 根据你之前测试成功的代码：value(0)是关闭，value(1)是开启。
+# 说明你的微雪扩展板是【高电平触发】，我们将 ACTIVE_LOW 设为 False 即可！
+ACTIVE_LOW = False
 
 class RelayDriver:
     def __init__(self):
-        # 初始化所有继电器引脚为输出，默认关闭（高电平=断开，低电平=闭合）
+        # 初始化所有继电器引脚为输出
+        # 断开时的默认状态
+        default_val = 1 if ACTIVE_LOW else 0
         self.pins = {
-            rid: Pin(gpio, Pin.OUT, value=1)
+            rid: Pin(gpio, Pin.OUT, value=default_val)
             for rid, gpio in RELAY_PIN_MAP.items()
         }
 
     def set(self, relay_id: int, state: int):
         """
         控制指定继电器
-        :param relay_id: 继电器编号 (1/2/3)
-        :param state:    1=开启 0=关闭
+        :param relay_id: 继电器编号 (1-8)
+        :param state:    1=要求开启 0=要求关闭
         """
         pin = self.pins.get(relay_id)
         if pin is None:
             return
-        # 低电平触发继电器：state=1 → pin=0
-        pin.value(0 if state else 1)
+            
+        if ACTIVE_LOW:
+            # 低电平触发：写0开，写1关
+            pin.value(0 if state else 1)
+        else:
+            # 高电平触发：写1开，写0关
+            pin.value(1 if state else 0)
 
     def all_off(self):
         """紧急关闭所有继电器"""
+        off_val = 1 if ACTIVE_LOW else 0
         for pin in self.pins.values():
-            pin.value(1)
+            pin.value(off_val)

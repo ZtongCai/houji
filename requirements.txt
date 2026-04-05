@@ -1,0 +1,23 @@
+# 后稷 (Project Houji) Pi 5 运行依赖
+#
+# 安装方式：
+#   source brain/venv/bin/activate
+#   pip install -r requirements.txt
+#
+# picamera2 请使用系统级安装：
+#   sudo apt install python3-picamera2
+#   并在创建 venv 时加 --system-site-packages
+
+# ── 串口通信 ──────────────────────────────────────────────
+pyserial>=3.5
+
+# ── AI 决策中枢 ──────────────────────────────────────────
+langgraph>=1.1.6
+langchain-google-genai>=4.2.1
+pydantic>=2.0
+
+# ── 配置管理 ──────────────────────────────────────────────
+python-dotenv>=1.0
+
+# ── 长期记忆（Phase 2 接入时启用）────────────────────────
+# lightrag-hku>=1.0.0

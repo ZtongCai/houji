@@ -1,63 +1,65 @@
 # 后稷 (Project Houji) 🌱
 
-> 一个在 50×50×100cm 密闭帐篷内，由 AI 全程接管的水培生菜生命周期项目。
+> 一个在 50×50×100cm 密闭帐篷内，由 Gemini AI 全程接管的水培生菜生命周期项目。
 
-## 架构概览
-
-```
-brain/        # 树莓派 5 端：Python 主控 + AI 决策
-spine/        # 树莓派 Pico 端：MicroPython 继电器驱动
-dashboard/    # Windows 端：Streamlit 直播看板
-docs/         # 项目文档
-```
-
-## 硬件拓扑
+## 系统架构
 
 ```
-[Camera V1.3] ──────┐
-                    ▼
-[Pi 5 (brain)] ←── USB 串口 ──→ [Pico (spine)] ──→ 继电器板
-     │                                               ├── 全光谱补光灯
-     │ Samba 共享 (局域网)                            ├── 排气扇
-     ▼                                               └── 蠕动泵
-[Windows Dashboard]
+[Camera OV5647] ──┐
+[7合1传感器]   ──▶  [Pi 5 (brain)] ── USB ──▶ [Pico (spine)] ──▶ 继电器板
+                                     Samba ▼                     ├── 营养液泵
+                                 [Windows 看板]                  ├── 进/出气风扇
+                                                                 ├── 打氧泵
+                                                                 └── 补光灯
 ```
 
-## AI & 数据栈
+## 核心技术栈
 
-| 模块 | 技术 | 用途 |
-|------|------|------|
-| 决策引擎 | Gemini Flash / Pro | 视觉巡检 + 动作指令 |
-| 长期记忆 | LightRAG | 水培手册 + 生长日记 |
-| 短波记忆 | SQLite | 传感器高频数值 |
-
-## 数据目录（Samba 共享）
-
-```
-brain/data/
-├── houji.db          # SQLite 传感器数据库
-├── thought.log       # AI 思考日志
-├── snapshots/        # 摄像头定时快照
-└── rag_store/        # LightRAG 向量库 + 图谱
-```
+| 层 | 技术 |
+|---|---|
+| AI 决策 | LangGraph + Gemini 3 Flash Preview |
+| 传感数据 | SQLite (`houji.db`) |
+| 摄像头 | picamera2 (OV5647 CSI) |
+| 继电器通信 | pyserial · JSON Lines 协议 |
+| 长期记忆 | LightRAG (Phase 2) |
+| 看板 | Streamlit (Phase 3) |
 
 ## 快速开始
 
 ```bash
-# Pi 5 端
-cd brain && pip install -r requirements.txt
-python main.py
+# Pi5 - 激活环境并启动
+source brain/venv/bin/activate
+python brain/main.py
 
-# Windows 看板端
-cd dashboard && pip install -r requirements.txt
-streamlit run app.py
+# 常用测试脚本
+python test/test_camera.py       # 测试摄像头
+python test/test_ai_engine.py    # 测试 AI 决策闭环
+python test/reset_relays.py      # 全部继电器复位断开
 ```
 
-## 阶段规划
+> ⚠️ 需在 Pi5 上设置代理环境变量，以访问 Gemini API：
+> `export https_proxy=http://192.168.1.40:8001`
 
-- **Phase 1 (当前)**：硬件跑通 + 基础生存控制
-- **Phase 2**：AI 决策 + LightRAG 接入
-- **Phase 3**：Streamlit 看板 + OBS 直播
+## 数据目录
+
+```
+brain/data/
+├── houji.db        # 传感器历史数据
+├── thought.log     # AI 每次决策的推理记录
+└── snapshots/      # 摄像头定时快照
+```
+
+## 文档
+
+- [项目总纲](docs/PROJECT_BRIEF.md)
+- [AI 引擎设计](docs/AI_ENGINE_DESIGN.md)
+- [Gemini 可用模型](docs/GEMINI_MODELS.md)
+
+## 进展
+
+- ✅ Phase 1：传感器 + 摄像头 + 继电器硬件全链路打通
+- ✅ Phase 2：LangGraph + Gemini AI 决策闭环打通
+- 🔲 Phase 3：Streamlit 看板 + OBS 直播
 
 ---
 *致敬 Sol 模式 🤖*
