@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.env
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+
+# 运行时数据（不入库，通过 Samba 共享）
+brain/data/houji.db
+brain/data/thought.log
+brain/data/snapshots/
+brain/data/rag_store/
+
+# Streamlit
+.streamlit/secrets.toml
+
+# 系统文件
+.DS_Store
+Thumbs.db

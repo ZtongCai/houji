@@ -1,0 +1,5 @@
+# Pi 5 主控端依赖
+pyserial>=3.5          # 串口通信
+google-genai>=0.8.0    # Gemini API 客户端
+lightrag-hku>=1.0.0    # LightRAG 长期记忆
+# picamera2            # 摄像头（仅 Pi 5 环境安装）

@@ -1,0 +1,2 @@
+# Windows 看板端依赖
+streamlit>=1.35.0
