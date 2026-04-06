@@ -35,8 +35,9 @@ _bridge: SerialBridge | None = None
 
 # ── Pydantic 结构化输出定义 ──────────────────────────────
 class RelayAction(BaseModel):
-    relay_id: int   # 继电器编号 1-8
-    state: int      # 1=开, 0=关
+    relay_id: int            # 继电器编号 1-8
+    state: int               # 1=开, 0=关
+    duration_seconds: int = 0  # >0 表示定时：开启后自动关闭；0 表示持续到下次决策
 
 class HoujiDecision(BaseModel):
     thought: str                 # AI 推理过程
@@ -52,6 +53,14 @@ SYSTEM_PROMPT = """你是"后稷"，一个专业的水培生菜 AI 农场主。
 - relay_id=3 : 出气风扇 (12V) - 排出废气
 - relay_id=7 : 打氧泵 (220V) - 给营养液增氧
 - relay_id=8 : 补光灯 (220V) - 全光谱生长光
+
+【重要】动作字段说明：
+- state=1/0 表示开/关
+- duration_seconds：
+  - 蠕动泵（relay_id=1）：必须设 duration_seconds，范围 5~30s，系统自动定时关闭
+  - 打氧泵（relay_id=7）：必须设 duration_seconds，范围 10~120s，系统自动定时关闭
+  - 风扇（relay_id=2,3）：通风场景设 duration_seconds（如 60~300s），持续通风设 0
+  - 补光灯（relay_id=8）：设 duration_seconds=0，持续开启到下次决策
 
 生长参数参考：
 - 温度：18~28°C
@@ -121,18 +130,63 @@ def decide_node(state: HoujiState) -> HoujiState:
 
 
 def execute_node(state: HoujiState) -> HoujiState:
-    """通过 SerialBridge 向 Pico 下发指令，执行继电器动作"""
+    """通过 SerialBridge 向 Pico 下发指令，执行继电器动作
+
+    定时动作（duration_seconds > 0）：所有继电器并发计时，互不阻塞。
+    总等待时间 = max(duration)，而非各 duration 之和。
+    """
+    import time
+    import threading
     global _bridge
     if _bridge is None:
         _bridge = SerialBridge()
-    
+
+    # 硬性上限：蠕动泵≤30s，其他≤300s
+    MAX_DURATION = {1: 30}
+
+    def _auto_off(rid: int, delay: float):
+        """在后台线程中等待 delay 秒后关闭指定继电器"""
+        time.sleep(delay)
+        _bridge.send_command({"cmd": "relay", "id": rid, "state": 0})
+        log.info(f"[执行] 继电器{rid} 定时到期，自动关闭")
+
     results = []
+    timers = []
+    max_duration = 0
+
     for action in state["actions"]:
-        cmd = {"cmd": "relay", "id": action["relay_id"], "state": action["state"]}
+        rid      = action["relay_id"]
+        st       = action["state"]
+        duration = action.get("duration_seconds", 0)
+
+        # 截断超长 duration
+        if duration > 0:
+            duration = min(duration, MAX_DURATION.get(rid, 300))
+            action = {**action, "duration_seconds": duration}
+
+        # 下发开/关指令
+        cmd  = {"cmd": "relay", "id": rid, "state": st}
         resp = _bridge.send_command(cmd)
+        log.info(f"[执行] 继电器{rid} => {'ON' if st else 'OFF'}, 回执: {resp}")
+
+        # 定时模式：启动后台线程自动关闭，不阻塞主流程
+        if st == 1 and duration > 0:
+            t = threading.Thread(target=_auto_off, args=(rid, duration), daemon=True)
+            t.start()
+            timers.append((t, duration))
+            max_duration = max(max_duration, duration)
+            log.info(f"[执行] 继电器{rid} 将在 {duration}s 后自动关闭（后台线程）")
+            resp = {"on": resp, "duration_s": duration, "auto_off": "pending"}
+
         results.append({"action": action, "resp": resp})
-        log.info(f"[执行] 继电器{action['relay_id']} => {'ON' if action['state'] else 'OFF'}, 回执: {resp}")
-    
+
+    # 等待所有定时线程完成（最长 = max duration，而非各 duration 之和）
+    if timers:
+        log.info(f"[执行] 等待所有定时动作完成，最长 {max_duration}s ...")
+        for t, _ in timers:
+            t.join()
+        log.info("[执行] 所有定时继电器已自动关闭")
+
     state["results"] = results
     return state
 

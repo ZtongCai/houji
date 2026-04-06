@@ -11,7 +11,7 @@ import streamlit as st
 from pathlib import Path
 
 # ── 配置（根据实际 Samba 挂载路径修改）──────────────────
-DATA_DIR     = Path("Z:/data")          # Samba 映射路径
+DATA_DIR     = Path("Z:/brain/data")   # Samba 映射路径（z:\brain\data）
 DB_PATH      = DATA_DIR / "houji.db"
 THOUGHT_LOG  = DATA_DIR / "thought.log"
 SNAPSHOT_DIR = DATA_DIR / "snapshots"
@@ -43,17 +43,24 @@ with col_sensor:
     if DB_PATH.exists():
         conn = sqlite3.connect(DB_PATH)
         row = conn.execute(
-            "SELECT temp, humidity, ph, ec, timestamp FROM sensor_readings ORDER BY timestamp DESC LIMIT 1"
+            """SELECT temp, humidity, co2, ch2o, tvoc, pm25, pm10, ec, ph, timestamp
+               FROM sensor_readings ORDER BY timestamp DESC LIMIT 1"""
         ).fetchone()
         conn.close()
         if row:
-            temp, humidity, ph, ec, ts = row
+            temp, humi, co2, ch2o, tvoc, pm25, pm10, ec, ph, ts = row
             c1, c2 = st.columns(2)
-            c1.metric("🌡 温度", f"{temp} °C" if temp else "N/A")
-            c2.metric("💧 湿度", f"{humidity} %" if humidity else "N/A")
+            c1.metric("🌡 温度",  f"{temp} °C"    if temp else "N/A")
+            c2.metric("💧 湿度",  f"{humi} %"     if humi else "N/A")
             c3, c4 = st.columns(2)
-            c3.metric("⚗️ pH",  f"{ph}" if ph else "N/A")
-            c4.metric("⚡ EC",  f"{ec} mS/cm" if ec else "N/A")
+            c3.metric("🌬 CO₂",  f"{co2} ppm"    if co2  else "N/A")
+            c4.metric("🧪 TVOC", f"{tvoc} ppb"   if tvoc else "N/A")
+            c5, c6 = st.columns(2)
+            c5.metric("⚗️ pH",   f"{ph}"          if ph   else "N/A")
+            c6.metric("⚡ EC",   f"{ec} mS/cm"   if ec   else "N/A")
+            c7, c8 = st.columns(2)
+            c7.metric("🌫 PM2.5", f"{pm25} μg/m³" if pm25 else "N/A")
+            c8.metric("🌫 PM10",  f"{pm10} μg/m³" if pm10 else "N/A")
             st.caption(f"最后更新：{time.strftime('%H:%M:%S', time.localtime(ts))}")
         else:
             st.info("数据库为空")
@@ -65,6 +72,6 @@ with col_log:
     st.subheader("🤖 AI 思考日志")
     if THOUGHT_LOG.exists():
         lines = THOUGHT_LOG.read_text(encoding="utf-8").splitlines()
-        st.text_area("", "\n".join(lines[-50:]), height=600)
+        st.text_area("", "\n".join(lines[-60:]), height=600)
     else:
         st.info("暂无日志（等待 Pi 5 生成...）")

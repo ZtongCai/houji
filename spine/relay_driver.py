@@ -15,9 +15,8 @@ RELAY_PIN_MAP = {
     8: 14,  # 220V: 补光灯
 }
 
-# 根据你之前测试成功的代码：value(0)是关闭，value(1)是开启。
-# 说明你的微雪扩展板是【高电平触发】，我们将 ACTIVE_LOW 设为 False 即可！
-ACTIVE_LOW = False
+# 微雪 Pico-Relay-B 实际是【低电平触发】：写 0 = 吸合（接通），写 1 = 断开（安全状态）
+ACTIVE_LOW = True
 
 class RelayDriver:
     def __init__(self):

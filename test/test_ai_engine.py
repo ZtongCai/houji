@@ -1,26 +1,57 @@
-"""
-测试 AI 大模型决策中枢（真实调用 Gemini，不 Mock）
-运行前请确保：
-  1. 已安装依赖: pip install langgraph langchain-google-genai pydantic
-  2. 已设置环境变量: export GEMINI_API_KEY=AIza...
-     （或者 config.py 中已内嵌 API Key）
-  3. Pico 已连上 USB，spine/main.py 已运行（用于测试继电器执行）
-     若没有 Pico，run_cycle() 内的串口会失败但不 crash，程序正常运行
-"""
 import sys
+import shutil
+import time
 from pathlib import Path
 
-# 将 brain 目录加入 sys.path，以便导入核心模块
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'brain'))
 
-from ai_engine import run_cycle
+from config import SNAPSHOT_DIR
+from ai_engine import _graph
+
+# 临时：把测试快照复制进 snapshots/ 供 AI 使用
+TEST_SNAP = Path(__file__).resolve().parent / "test_snapshot.jpg"
+if TEST_SNAP.exists():
+    dest = SNAPSHOT_DIR / f"{int(time.time())}.jpg"
+    shutil.copy(TEST_SNAP, dest)
+    print(f"[测试] 快照已就位: {dest}\n")
+else:
+    print("[测试] 无测试快照，AI 将在无图模式下决策\n")
 
 if __name__ == "__main__":
-    print("--- [后稷项目] LangGraph AI 决策中枢实机测试 ---")
-    print("正在执行一次完整决策周期：感知 → Gemini 决策 → 继电器执行 → 日志写入\n")
-    
-    run_cycle()
-    
-    print("\n✅ 决策周期执行完成！请检查以下结果：")
-    print("  1. brain/data/thought.log 是否有新增的决策记录")
-    print("  2. 继电器是否按照 AI 的指令发出了哒哒声")
+    print("=" * 60)
+    print("    后稷 AI 决策中枢 · 实机测试（流式输出）")
+    print("=" * 60 + "\n")
+
+    init_state = {
+        "sensor_data": {}, "image_path": None,
+        "thought": "", "actions": [], "results": [],
+    }
+
+    # 流式逐节点输出
+    for event in _graph.stream(init_state, stream_mode="updates"):
+        for node, output in event.items():
+            if node == "sense":
+                print("📡 [感知完成]")
+                print(f"   传感器: {output.get('sensor_data', {})}")
+                print(f"   快照  : {output.get('image_path')}\n")
+
+            elif node == "decide":
+                print("🧠 [Gemini 决策完成]")
+                print(f"\n{output.get('thought', '（无思考内容）')}\n")
+                print(f"   动作列表: {output.get('actions', [])}\n")
+
+            elif node == "execute":
+                print("⚙️  [执行完成]")
+                for r in output.get('results', []):
+                    a = r['action']
+                    d = a.get('duration_seconds', 0)
+                    dur_str = f"（定时 {d}s）" if d > 0 else "（持续）"
+                    print(f"   继电器{a['relay_id']} {'ON' if a['state'] else 'OFF'} {dur_str} → {r['resp']}")
+                print()
+
+            elif node == "log":
+                print("📝 [已写入 thought.log]\n")
+
+    print("=" * 60)
+    print("✅ 决策周期完成！")
+

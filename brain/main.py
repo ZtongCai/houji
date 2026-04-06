@@ -5,16 +5,16 @@
 import time
 import logging
 from config import (
-    SENSOR_INTERVAL, SNAPSHOT_INTERVAL, AI_DECISION_INTERVAL, THOUGHT_LOG_PATH
+    SENSOR_INTERVAL, SNAPSHOT_INTERVAL, AI_DECISION_INTERVAL, DATA_DIR
 )
 
-# 配置日志：同时输出到控制台和 thought.log
+# 配置日志：同时输出到控制台和独立的运行日志（不污染 AI thought.log）
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
     handlers=[
         logging.StreamHandler(),
-        logging.FileHandler(THOUGHT_LOG_PATH, encoding="utf-8"),
+        logging.FileHandler(DATA_DIR / "houji.log", encoding="utf-8"),
     ],
 )
 log = logging.getLogger("houji")

@@ -76,13 +76,19 @@ Gemini 被要求以严格的 JSON 结构返回，通过 Pydantic 模型强制校
 
 ```python
 class RelayAction(BaseModel):
-    relay_id: int   # 1到8的继电器编号
-    state: int      # 1=开, 0=关
+    relay_id: int            # 1-8 继电器编号
+    state: int               # 1=开, 0=关
+    duration_seconds: int = 0  # >0 定时自动关闭；0 持续到下次决策
 
 class HoujiDecision(BaseModel):
-    thought: str               # AI的分析推理
+    thought: str               # AI 的分析推理
     actions: list[RelayAction] # 要执行的动作
 ```
+
+**安全约束（硬编码上限）**：
+- 蠕动泵（relay 1）：最长 30s
+- 其他设备：最长 300s
+- 补光灯（relay 8）建议设 `duration_seconds=0`（持续）
 
 ---
 
@@ -104,11 +110,17 @@ class HoujiDecision(BaseModel):
 这套引擎对外只暴露一行简洁的调用接口，直接在 `main.py` 的主循环中替换 AI 决策的 TODO 块：
 
 ```python
-from ai_engine import run_cycle
+from ai_engine import _graph
 
-# 主循环中
-if now - last_ai >= AI_DECISION_INTERVAL:
-    run_cycle()
+init_state = {"sensor_data": {}, "image_path": None, "thought": "", "actions": [], "results": []}
+
+# 流式逐节点输出（测试用）
+for event in _graph.stream(init_state, stream_mode="updates"):
+    ...
+
+# 生产模式
+from ai_engine import run_cycle
+run_cycle()
 ```
 
 ---
