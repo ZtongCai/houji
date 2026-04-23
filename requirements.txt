@@ -4,9 +4,14 @@
 #   source brain/venv/bin/activate
 #   pip install -r requirements.txt
 #
-# picamera2 请使用系统级安装：
-#   sudo apt install python3-picamera2
-#   并在创建 venv 时加 --system-site-packages
+# 图像处理依赖：
+#   提供 USB 摄像头 (opencv-python) 抓拍支持
+
+# ── 图像处理 ──────────────────────────────────────────────
+opencv-python>=4.8.0
+
+# ── 传感器与硬件 I2C 通信 ───────────────────────────────
+adafruit-circuitpython-ads1x15>=2.2.14
 
 # ── 串口通信 ──────────────────────────────────────────────
 pyserial>=3.5

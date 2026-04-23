@@ -9,6 +9,17 @@ __pycache__/
 secrets.py
 
 
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.env
+.env.*
+*.env
+# 密钥文件（绝对不入 git）
+secrets.py
+
+
 # 运行时数据（不入库，通过 Samba 共享）
 brain/data/houji.db
 brain/data/thought.log
@@ -17,6 +28,14 @@ brain/data/rag_store/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# IDEs
+.vscode/
+.idea/
+
+# Samba / Temp
+.lgd-*
+.lgd-nfy*
 
 # 系统文件
 .DS_Store

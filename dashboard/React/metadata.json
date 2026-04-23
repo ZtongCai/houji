@@ -1,0 +1,5 @@
+{
+  "name": "Project Houji Dashboard",
+  "description": "AI-driven hydroponic life support system monitor. Real-time telemetry, hardware status, and Gemini reasoning logs.",
+  "requestFramePermissions": []
+}

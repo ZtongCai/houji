@@ -10,14 +10,33 @@ import sqlite3
 import streamlit as st
 from pathlib import Path
 
-# ── 配置（根据实际 Samba 挂载路径修改）──────────────────
-DATA_DIR     = Path("Z:/brain/data")   # Samba 映射路径（z:\brain\data）
+# ── 配置（自适应数据路径）──────────────────
+# 优先寻找包含 houji.db 的目录
+def find_data_dir():
+    candidates = [
+        Path("Z:/"),                # Samba 映射为 Z: 盘
+        Path("Z:/brain/data"),      # Samba 映射为根目录
+        Path(__file__).parent.parent.parent / "brain" / "data", # 本地相对路径
+        Path("./brain/data"),       # 当前目录下
+    ]
+    for d in candidates:
+        if d.exists() and (d / "houji.db").exists():
+            return d
+    return candidates[0] # 默认回退到 Z:
+
+DATA_DIR = find_data_dir()
 DB_PATH      = DATA_DIR / "houji.db"
 THOUGHT_LOG  = DATA_DIR / "thought.log"
 SNAPSHOT_DIR = DATA_DIR / "snapshots"
 
 st.set_page_config(page_title="后稷 · 水培生菜 AI 看板", layout="wide")
 st.title("🌱 后稷 · 水培生菜 AI 农场")
+
+# 调试信息（仅在没找到数据库时显示，或放在侧边栏）
+with st.sidebar:
+    st.write(f"📂 **当前数据目录**: `{DATA_DIR.absolute()}`")
+    if not DB_PATH.exists():
+        st.error("❌ 未在上述目录找到 `houji.db`，请检查 Z 盘挂载或路径！")
 
 # ── 自动刷新（60 秒）────────────────────────────────────
 st.markdown(

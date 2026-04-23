@@ -1,0 +1,2 @@
+# 强制所有代码文件使用 Linux 的 LF 换行符（专治 Windows 环境下的警告和提交拦截）
+* text=auto eol=lf

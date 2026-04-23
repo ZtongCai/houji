@@ -1,0 +1,58 @@
+@import url('https://fonts.googleapis.com/css2?family=VT323&family=Inter:wght@400;700&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-pixel: "VT323", monospace;
+  
+  --color-stardew-brown-dark: #4a2e19;
+  --color-stardew-brown-light: #8b5a2b;
+  --color-stardew-parchment: #f4e4bc;
+  --color-stardew-gold: #ffcc33;
+  --color-stardew-green: #348e3e;
+  --color-stardew-blue: #2e5d9b;
+}
+
+@layer base {
+  body {
+    @apply bg-[#2c1e14] text-[#4a2e19] font-sans antialiased overflow-hidden h-screen;
+    background-image: 
+      radial-gradient(circle at 2px 2px, #3d2b1f 1px, transparent 0);
+    background-size: 4px 4px;
+  }
+}
+
+.stardew-card {
+  @apply bg-stardew-parchment border-4 border-stardew-brown-dark rounded-none shadow-[4px_4px_0_0_rgba(0,0,0,0.3)] relative;
+  image-rendering: pixelated;
+}
+
+.stardew-card::after {
+  content: '';
+  @apply absolute inset-0 border-2 border-white/20 pointer-events-none;
+}
+
+.stardew-header-card {
+  @apply bg-stardew-brown-light border-4 border-stardew-brown-dark text-stardew-parchment shadow-[4px_4px_0_0_rgba(0,0,0,0.3)];
+}
+
+.pixel-font {
+  @apply font-pixel tracking-wider;
+}
+
+.status-dot {
+  @apply w-3 h-3 rounded-none border-2 border-black/20;
+}
+
+/* Custom Scrollbar for Stardew style */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 8px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+  @apply bg-stardew-brown-dark/10;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  @apply bg-stardew-brown-light border-2 border-stardew-brown-dark;
+}
+
+
