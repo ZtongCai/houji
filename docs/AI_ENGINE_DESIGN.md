@@ -61,12 +61,15 @@ LangGraph 的所有节点共享一个 `TypedDict`，数据无需手动传参：
 
 ```python
 class HoujiState(TypedDict):
-    sensor_data: dict        # 当前传感器读数
+    sensor_data: dict        # 当前传感器读数（实时）
+    history: list[dict]      # 最近10条历史数据（趋势感知，已接入）
     image_path: str | None   # 最新快照的文件路径
     thought: str             # Gemini 的推理文字
     actions: list[dict]      # 要执行的继电器指令列表
     results: list[dict]      # Pico 执行后的回执列表
 ```
+
+> `history` 字段在 `sense_node` 中由 `get_latest(10)` 填充，以时间戳单行格式注入 Prompt，让 AI 能感知 EC/CO₂/温湿度的变化趋势，而非仅凭当前一帧数据决策。
 
 ---
 
@@ -86,9 +89,15 @@ class HoujiDecision(BaseModel):
 ```
 
 **安全约束（硬编码上限）**：
-- 蠕动泵（relay 1）：最长 30s
-- 其他设备：最长 300s
-- 补光灯（relay 8）建议设 `duration_seconds=0`（持续）
+
+| 设备 | relay_id | MAX_DURATION | 附加规则 |
+|---|---|---|---|
+| 营养液蠕动泵 | 1 | ≤30s | Prompt 层要求 1~3s；强制联动打氧泵 60s |
+| 进气风扇 | 2 | ≤300s | 必须与排气扇（3）同时开关；固定通风 120s；禁止 duration=0 |
+| 出气风扇 | 3 | ≤300s | 必须与进气扇（2）同时开关；夜间仅 CO2>2000ppm 时破例 |
+| 打氧泵 | 7 | ≤300s | 夜间禁止常规开启；白天每小时前5分钟开60s |
+| 补光灯 | 8 | 无限制 | duration_seconds=0 持续；白天常亮，夜间关 |
+
 
 ---
 
@@ -112,7 +121,7 @@ class HoujiDecision(BaseModel):
 ```python
 from ai_engine import _graph
 
-init_state = {"sensor_data": {}, "image_path": None, "thought": "", "actions": [], "results": []}
+init_state = {"sensor_data": {}, "history": [], "image_path": None, "thought": "", "actions": [], "results": []}
 
 # 流式逐节点输出（测试用）
 for event in _graph.stream(init_state, stream_mode="updates"):
@@ -125,17 +134,95 @@ run_cycle()
 
 ---
 
-## 7. 未来扩展：Phase 2 的 LightRAG 接入点
+## 7. 架构演进路线
 
-在 `decide_node` 中增加一个条件分支路由器：
-- 当 AI 发现"疑难杂症"（如识别到叶片异色、根茎腐烂迹象），可以自动路由到 `rag_node`
-- `rag_node` 从 LightRAG 向量库检索相关的水培手册知识
-- 将检索结果注入 State，交回 `decide_node` 用丰富上下文做二次决策
+### 当前定位：编排式 Agent（Orchestration Mode）
+
+后稷目前是 LangGraph **线性编排**形态：图结构由程序员预定义，AI 只在 `decide_node` 参与一次，输出结构化 JSON 由 `execute_node` 解析执行。AI 是"决策引擎"而非完全自主 Agent。
 
 ```
-decide_node ─── (判定: 异常) ───▶ rag_node ───▶ decide_node (二次)
-            └── (判定: 正常) ───▶ execute_node
+当前：sense → decide → execute → log → END
+        （固定路径，AI 无法改变流程）
 ```
+
+---
+
+### Phase 3：LightRAG 长期记忆（条件分支路由）
+
+**目标**：让 AI 在发现异常时，能检索历史水培知识库做二次决策，并每日写入生长日记积累经验。
+
+```
+decide_node ─── (判定: 叶片异常/疑难) ───▶ rag_node ───▶ decide_node (二次决策)
+            └── (判定: 正常) ──────────────▶ execute_node
+```
+
+- `rag_node`：从 LightRAG 向量库检索相关水培手册知识
+- 检索结果注入 State，丰富 `decide_node` 的上下文
+- `rag_memory.py` 中 `insert_diary()` / `query()` 接口已预留
+
+**依赖**：`lightrag-hku`（已在 `requirements.txt` 注释备用）
+
+---
+
+### Phase 4：事件驱动（异常阈值主动触发）
+
+**目标**：突破 5 分钟被动轮询，异常时秒级响应。
+
+`main.py` 增加后台异常监控线程，任一阈值超标立即插队调用 `run_cycle()`：
+
+```python
+ALERT_THRESHOLDS = {
+    "co2":  2000,   # ppm，严重积累
+    "temp": 30.0,   # °C，过热危险
+    "ec":   2500,   # μS/cm，烧苗风险
+}
+```
+
+---
+
+### Phase 5：ReAct Tool Use（完全自主 Agent）
+
+**目标**：AI 从"填表员"升级为"主动调用工具的智能体"，自主决定何时用什么工具，支持多轮推理。
+
+核心操作封装为 LangGraph Tool：
+
+```python
+@tool
+def read_sensor_history(n: int) -> str:
+    """查询最近n条传感器历史，感知趋势"""
+
+@tool
+def control_relay(relay_id: int, state: int, duration_seconds: int) -> str:
+    """控制指定继电器，返回执行结果"""
+
+@tool
+def take_snapshot() -> str:
+    """主动拍摄当前摄像头快照"""
+```
+
+图结构改为循环 ReAct 模式，AI 自主决定何时停止：
+
+```
+agent_node ──▶ tool_node ──▶ observe_node ──┐
+    ▲                                        │
+    └────────────── (继续推理) ───────────────┘
+                        │（任务完成）
+                        ▼
+                   log_node ──▶ END
+```
+
+> ⚠️ **升级风险**：AI 可能在单次周期内多次触发继电器，需要工具层加入计数限制和冷却时间保护。建议硬件稳定运行后再推进。
+
+---
+
+### 演进总览
+
+| 阶段 | 架构类型 | AI 角色 | 状态 |
+|---|---|---|---|
+| Phase 1~2 | 线性编排 + 历史趋势注入 | 填表决策员（有趋势感知） | ✅ 已完成 |
+| Phase 3 | 条件分支 + LightRAG | 知识检索专家 | 🔲 待开发 |
+| Phase 4 | 事件驱动 + 异常插队 | 主动响应者 | 🔲 待开发 |
+| Phase 5 | ReAct Tool Use | 完全自主智能体 | 🔲 长期目标 |
 
 ---
 
@@ -144,4 +231,8 @@ decide_node ─── (判定: 异常) ───▶ rag_node ───▶ decide
 ```bash
 # 在树莓派 Pi5 上执行
 pip install langgraph langchain-google-genai pydantic
+
+# Phase 3 接入时追加
+# pip install lightrag-hku
 ```
+

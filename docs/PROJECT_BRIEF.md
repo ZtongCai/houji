@@ -10,14 +10,15 @@
 
 - **大脑 (Pi 5)**：Python 主控、图像处理、AI 调度、数据存储
 - **脊髓 (Pico)**：USB 串口接收 JSON 指令，驱动 8 路继电器控制物理设备
-- **感知 (OV5647)**：CSI 摄像头，每 5 分钟定时快照
-- **传感 (7合1)**：温度/湿度/CO₂/TVOC/CH₂O/PM2.5/PM10，每分钟采集
+- **摄像头 (USB)**：OpenCV 采图，每 5 分钟定时快照，硬件倒置已做 180° 翻转修正
+- **环境传感 (7合1)**：温度/湿度/CO₂/TVOC/CH₂O/PM2.5/PM10，每分钟采集，串口 `/dev/ttyAMA0`
+- **水质传感 (TDS/EC)**：营养液 EC 浓度（μS/cm），ADS1115 ADC → I2C 0x48，含温度补偿
 
 ## 3. AI 与数据栈
 
 | 模块 | 技术 | 状态 |
 |---|---|---|
-| 决策引擎 | LangGraph + Gemini 3 Flash Preview | ✅ 已接入 |
+| 决策引擎 | LangGraph + Gemini Flash (多模态) | ✅ 已接入 |
 | 短期记忆 | SQLite (`houji.db`) | ✅ 已接入 |
 | 长期记忆 | LightRAG（水培知识库） | 🔲 Phase 3 |
 
@@ -26,12 +27,15 @@
 采用"局域网生产-消费解耦"模式：
 
 - **数据网关**：Pi 5 开启 Samba，将 `brain/data/` 映射为 Windows Z: 盘
-- **渲染看板**：Windows 端 Streamlit（`dashboard/app.py`）
+- **渲染看板**：Windows 端 Streamlit（`dashboard/Streamlit/app.py`）
 - **直播推流**：OBS Studio 截屏 Streamlit 窗口
 
 ## 5. 工程原则
 
 - **物理隔离**：12V 和 220V 设备通过继电器 4/5/6 硬件隔离带分区
-- **安全优先**：蠕动泵等耗材设备强制 `duration_seconds` 定时保护，代码层硬性截断
+- **安全优先**：
+  - 蠕动泵（relay 1）：强制 `duration_seconds` 定时保护，代码层硬性截断 ≤30s
+  - 进排气扇（relay 2/3）：必须联动开关，固定 120s 通风，禁止持续开（duration=0）
+  - 打氧泵（relay 7）：夜间静音禁止常规开启，代码层硬性截断 ≤300s
 - **扁平结构**：不过度抽象，优先可读性
 - **存活优先**：AI 即使返回空动作，系统也不崩溃

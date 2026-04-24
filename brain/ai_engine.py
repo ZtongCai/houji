@@ -81,6 +81,7 @@ SYSTEM_PROMPT = """你是"后稷"，一个专业的水培生菜 AI 农场主。
 # ── LangGraph State ──────────────────────────────────────
 class HoujiState(TypedDict):
     sensor_data: dict
+    history: list[dict]    # 最近N条历史传感器数据，用于趋势判断
     image_path: str | None
     thought: str
     actions: list[dict]
@@ -90,14 +91,18 @@ class HoujiState(TypedDict):
 # ── 节点函数 ─────────────────────────────────────────────
 
 def sense_node(state: HoujiState) -> HoujiState:
-    """读取最新传感器数据和摄像头快照路径"""
+    """读取最新传感器数据、历史趋势记录和摄像头快照路径"""
     state["sensor_data"] = read_sensors()
-    
+
+    # 注入最近10条历史数据，让 AI 具备趋势感知能力
+    state["history"] = get_latest(10)
+
     # 找最新快照文件
     snapshots = sorted(SNAPSHOT_DIR.glob("*.jpg"))
     state["image_path"] = str(snapshots[-1]) if snapshots else None
-    
+
     log.info(f"[感知] 传感器: {state['sensor_data']}")
+    log.info(f"[感知] 历史记录: {len(state['history'])} 条")
     log.info(f"[感知] 使用快照: {state['image_path']}")
     return state
 
@@ -123,10 +128,38 @@ def decide_node(state: HoujiState) -> HoujiState:
      (3) 成熟期 (采摘前)：目标 EC 1300 ~ 1800
    - 【极其严格的防烧苗铁律】：10 升水箱水少但母液极浓！如果你检测到 EC 低于目标下限，控制继电器1（蠕动泵）补液时，`duration_seconds` **必须严格限制在 1 到 3 秒之间**！宁可“蚂蚁搬家”、多等几个5分钟的巡检周期，也绝不允许一次开5秒以上导致浓度暴增烧苗！
    - 【强制联动搅拌】：无论白天还是深夜，只要你决定开启继电器1加液，你都必须**同时下发开启继电器7（打氧泵）60 秒的指令**！利用气泡的翻滚充当搅拌机，确保营养液迅速融开，防止局部浓度过高烧根。
+5. 进排气风扇联动通风策略（继电器2=进气, 继电器3=排气，极其重要）：
+   - 【强制联动】：进气扇（relay_id=2）与排气扇（relay_id=3）必须同时开、同时关，严禁只开其中一个。
+     每次下发通风动作时，actions 列表中必须同时包含 relay_id=2 和 relay_id=3 两条指令。
+   - 【触发条件】：仅在满足以下任一条件时才允许通风：
+     (1) CO2 浓度 > 1200 ppm（废气积累过高）
+     (2) 温度 > 28°C（帐篷过热需降温）
+     其他情况禁止开启风扇，保持密闭帐篷的温湿度稳定。
+   - 【通风时长】：每次通风 `duration_seconds` 固定设为 120 秒（2分钟）。
+     **绝对禁止将风扇设为 duration_seconds=0（持续通风）**，否则帐篷长期漏气会导致温湿度崩溃。
+   - 【夜间静音限制】：夜间（{LIGHT_OFF_HOUR}:00 到次日 {LIGHT_ON_HOUR}:00）禁止常规轮询通风。
+     仅当 CO2 > 2000 ppm（严重超标危险阈值）时，才允许破例开启一次 120 秒通风。
 """
 
+    # 格式化历史趋势数据（最新在前，便于 AI 感知 EC/CO2/温湿度走势）
+    history_lines = []
+    for row in state.get("history", []):
+        ts = datetime.fromtimestamp(row["timestamp"]).strftime("%m-%d %H:%M")
+        history_lines.append(
+            f"  [{ts}] "
+            f"temp={row.get('temp')}°C  humi={row.get('humidity')}%  "
+            f"co2={row.get('co2')}ppm  ec={row.get('ec')}μS/cm"
+        )
+    history_text = "\n".join(history_lines) if history_lines else "  （暂无历史数据）"
+
     content = [
-        {"type": "text", "text": f"{SYSTEM_PROMPT}\n\n当前传感器数据：\n{sensor_text}\n\n{strategy_text}"}
+        {"type": "text", "text": (
+            f"{SYSTEM_PROMPT}\n\n"
+            f"当前传感器数据：\n{sensor_text}\n\n"
+            f"近期历史趋势（最新在前，共 {len(history_lines)} 条，用于判断 EC/CO2/温湿度走势）：\n"
+            f"{history_text}\n\n"
+            f"{strategy_text}"
+        )}
     ]
     
     # 如果有摄像头图像，则追加
@@ -160,8 +193,8 @@ def execute_node(state: HoujiState) -> HoujiState:
     if _bridge is None:
         _bridge = SerialBridge()
 
-    # 硬性上限：蠕动泵≤30s，其他≤300s
-    MAX_DURATION = {1: 30}
+    # 硬性上限：蠕动泵≤30s，进排气扇≤300s（单次通风最多5分钟），其他≤300s
+    MAX_DURATION = {1: 30, 2: 300, 3: 300}
 
     def _auto_off(rid: int, delay: float):
         """在后台线程中等待 delay 秒后关闭指定继电器"""
@@ -247,6 +280,7 @@ def run_cycle():
     """执行一次完整的 感知→决策→执行→日志 闭环"""
     init_state: HoujiState = {
         "sensor_data": {},
+        "history": [],
         "image_path": None,
         "thought": "",
         "actions": [],
