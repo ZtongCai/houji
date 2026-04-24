@@ -50,8 +50,8 @@ ENV_THRESHOLDS = {
     "humidity_min": 60, # 最低湿度 (%)
     "ph_min": 5.5,      # pH 下限
     "ph_max": 6.5,      # pH 上限
-    "ec_min": 1.0,      # EC 下限 (mS/cm)
-    "ec_max": 2.0,      # EC 上限 (mS/cm)
+    "ec_min": 1000.0,   # EC 下限 (μS/cm)
+    "ec_max": 2000.0,   # EC 上限 (μS/cm)
 }
 
 # ── 光照计划（24小时制）─────────────────────────────────

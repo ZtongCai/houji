@@ -17,11 +17,11 @@ class HoujiSensor:
             print(f"Serial connection failed: {e}")
             exit(1)
 
-    def read_frame(self):
-        """精准捕获 17 字节的有效数据帧"""
+    def read_frame(self, timeout: float = 3.0):
+        """精准捕获 17 字节的有效数据帧，超时返回 None"""
         if not self.ser: return None
-        
-        while True:
+        deadline = time.time() + timeout
+        while time.time() < deadline:
             if self.ser.in_waiting > 0:
                 char1 = self.ser.read(1)
                 if char1 == b'\x3c':
@@ -31,6 +31,7 @@ class HoujiSensor:
                         if len(rest_of_data) == 15:
                             return b'\x3c\x02' + rest_of_data
             time.sleep(0.01)
+        return None  # 超时，让调用方处理
 
     def parse_data(self, data):
         """根据说明书解析协议"""

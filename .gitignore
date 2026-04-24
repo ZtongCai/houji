@@ -7,22 +7,15 @@ __pycache__/
 *.env
 # 密钥文件（绝对不入 git）
 secrets.py
+venv/
 
-
-# Python
-__pycache__/
-*.py[cod]
-*.pyo
-.env
-.env.*
-*.env
-# 密钥文件（绝对不入 git）
-secrets.py
-
+# 测试与调试脚本（不入库）
+test/
 
 # 运行时数据（不入库，通过 Samba 共享）
 brain/data/houji.db
 brain/data/thought.log
+brain/data/houji.log
 brain/data/snapshots/
 brain/data/rag_store/
 

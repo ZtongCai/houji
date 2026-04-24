@@ -10,11 +10,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import TypedDict
 
-# 绕过代理的 SSL 拦截（开发环境使用代理时需要）
-os.environ.setdefault("GRPC_DEFAULT_SSL_TARGET_NAME_OVERRIDE", "")
-os.environ["SSL_CERT_FILE"] = ""
-import ssl
-ssl._create_default_https_context = ssl._create_unverified_context
+# 如果开发环境使用了自签 CA 证书的代理，请设置证书路径：
+# os.environ["REQUESTS_CA_BUNDLE"] = "/path/to/proxy-ca.crt"
+# 不要全局关闭 SSL 校验！那会让 API Key 暗文暴露在中间人攻击页下。
 
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import HumanMessage
@@ -23,7 +21,8 @@ from pydantic import BaseModel
 
 from config import (
     GEMINI_API_KEY, GEMINI_FLASH_MODEL,
-    THOUGHT_LOG_PATH, SNAPSHOT_DIR
+    THOUGHT_LOG_PATH, SNAPSHOT_DIR,
+    LIGHT_ON_HOUR, LIGHT_OFF_HOUR,
 )
 from sensor_logger import read_sensors, get_latest
 from serial_bridge import SerialBridge
@@ -42,6 +41,13 @@ class RelayAction(BaseModel):
 class HoujiDecision(BaseModel):
     thought: str                 # AI 推理过程
     actions: list[RelayAction]   # 要执行的继电器动作列表
+
+# ── 全局 LLM 实例（模块加载一次，避免每次决策重建 HTTP client）────────
+_llm = ChatGoogleGenerativeAI(
+    model=GEMINI_FLASH_MODEL,
+    google_api_key=GEMINI_API_KEY,
+    temperature=0.3,
+).with_structured_output(HoujiDecision)
 
 # ── 系统提示词 ───────────────────────────────────────────
 SYSTEM_PROMPT = """你是"后稷"，一个专业的水培生菜 AI 农场主。
@@ -66,7 +72,7 @@ SYSTEM_PROMPT = """你是"后稷"，一个专业的水培生菜 AI 农场主。
 - 温度：18~28°C
 - 湿度：60%+
 - CO2：800~1200ppm 最佳（过高需通风）
-- EC：1.0~2.0 mS/cm（待接入）
+- EC：1000~2000 μS/cm（传感器 ec 字段单位，生长期参考值）
 - pH：5.5~6.5（待接入）
 
 请根据当前传感器数据与摄像头图像，给出你的分析判断，并给出需要执行的动作列表。
@@ -98,16 +104,29 @@ def sense_node(state: HoujiState) -> HoujiState:
 
 def decide_node(state: HoujiState) -> HoujiState:
     """调用 Gemini 多模态进行决策，强制结构化输出"""
-    llm = ChatGoogleGenerativeAI(
-        model=GEMINI_FLASH_MODEL,
-        google_api_key=GEMINI_API_KEY,
-        temperature=0.3,
-    ).with_structured_output(HoujiDecision)
-
     # 构造 Prompt
     sensor_text = json.dumps(state["sensor_data"], ensure_ascii=False, indent=2)
+    current_time_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    
+    strategy_text = f"""
+【种植与控制策略补充（卧室静音模式 & 视觉动态施肥）】
+1. 当前系统时间：{current_time_str} (24小时制)。
+2. 光照策略：设定白天为 {LIGHT_ON_HOUR}:00 到 {LIGHT_OFF_HOUR}:00。如果在规定白天时间内请保持灯常亮，夜间休息期务必关闭。
+3. 卧室静音打氧策略（继电器7，极其重要）：
+   - 【夜间禁止】：为了不影响睡眠，夜间（{LIGHT_OFF_HOUR}:00 到次日 {LIGHT_ON_HOUR}:00），绝对禁止常规轮询开启打氧泵！
+   - 【白天低频】：白天期间，仅在每小时的前5分钟内（例如当前分钟数在 00~05 之间）开启打氧泵 60 秒。其余时间保持安静。
+4. 视觉动态施肥策略（蠕动泵，继电器1）：
+   - 必须先通过摄像头快照判断生菜当前的生长阶段。
+   - 参考目标（当前传感器 `ec` 字段数值单位为 μS/cm，直接对齐官方说明书）：
+     (1) 育苗期 (三四片真叶)：目标 EC 600 ~ 1000
+     (2) 生长期 (旺盛生长)：目标 EC 1000 ~ 1500
+     (3) 成熟期 (采摘前)：目标 EC 1300 ~ 1800
+   - 【极其严格的防烧苗铁律】：10 升水箱水少但母液极浓！如果你检测到 EC 低于目标下限，控制继电器1（蠕动泵）补液时，`duration_seconds` **必须严格限制在 1 到 3 秒之间**！宁可“蚂蚁搬家”、多等几个5分钟的巡检周期，也绝不允许一次开5秒以上导致浓度暴增烧苗！
+   - 【强制联动搅拌】：无论白天还是深夜，只要你决定开启继电器1加液，你都必须**同时下发开启继电器7（打氧泵）60 秒的指令**！利用气泡的翻滚充当搅拌机，确保营养液迅速融开，防止局部浓度过高烧根。
+"""
+
     content = [
-        {"type": "text", "text": f"{SYSTEM_PROMPT}\n\n当前传感器数据：\n{sensor_text}"}
+        {"type": "text", "text": f"{SYSTEM_PROMPT}\n\n当前传感器数据：\n{sensor_text}\n\n{strategy_text}"}
     ]
     
     # 如果有摄像头图像，则追加
@@ -120,7 +139,7 @@ def decide_node(state: HoujiState) -> HoujiState:
             "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"}
         })
     
-    decision: HoujiDecision = llm.invoke([HumanMessage(content=content)])
+    decision: HoujiDecision = _llm.invoke([HumanMessage(content=content)])
     
     state["thought"] = decision.thought
     state["actions"] = [a.model_dump() for a in decision.actions]

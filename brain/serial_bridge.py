@@ -6,6 +6,7 @@
 """
 import json
 import logging
+import threading
 import serial
 from config import SERIAL_PORT, SERIAL_BAUD
 
@@ -15,6 +16,7 @@ log = logging.getLogger("houji.serial")
 class SerialBridge:
     def __init__(self):
         self.ser = None
+        self._lock = threading.Lock()  # 防止多线程并发写串口
         self.connect()
 
     def connect(self):
@@ -27,19 +29,20 @@ class SerialBridge:
             self.ser = None
 
     def send_command(self, cmd: dict) -> dict | None:
-        """发送 JSON 指令，返回 Pico 回执，失败时尝试重连一次"""
-        if not self.ser:
-            self.connect()
-        if not self.ser:
-            return None
-        try:
-            self.ser.write((json.dumps(cmd) + "\n").encode())
-            raw = self.ser.readline().decode().strip()
-            return json.loads(raw) if raw else None
-        except Exception as e:
-            log.warning(f"[串口] 发送失败，尝试重连: {e}")
-            self.connect()
-            return None
+        """发送 JSON 指令，返回 Pico 回执；加锁防止多线程竞争，失败时重连一次"""
+        with self._lock:
+            if not self.ser:
+                self.connect()
+            if not self.ser:
+                return None
+            try:
+                self.ser.write((json.dumps(cmd) + "\n").encode())
+                raw = self.ser.readline().decode().strip()
+                return json.loads(raw) if raw else None
+            except Exception as e:
+                log.warning(f"[串口] 发送失败，尝试重连: {e}")
+                self.connect()
+                return None
 
     def close(self):
         if self.ser:
