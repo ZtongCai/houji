@@ -2,6 +2,10 @@
 
 > 一个在 50×50×100cm 密闭帐篷内，由 Gemini AI 全程接管的水培生菜生命周期项目。
 
+![Dashboard Screenshot](docs/ScreenShot.png)
+
+🔗 **后稷 AI 全局监控看板 (实况)**: [https://d0b0db6.r7.vip.cpolar.cn](https://d0b0db6.r7.vip.cpolar.cn)
+
 ## 系统架构
 
 ```
@@ -97,7 +101,7 @@ streamlit run app.py
 
 | 设备 | relay_id | 电压 | 控制规则 |
 |---|---|---|---|
-| 营养液蠕动泵 | 1 | 12V | 按生长阶段补液 1~3s；硬性截断 ≤30s；强制联动打氧 |
+| 营养液蠕动泵 | 1 | 12V | 按生长阶段补液，固定 2s；硬性截断 ≤5s；强制联动打氧 |
 | 进气风扇 | 2 | 12V | CO2>1200ppm 或 温度>28°C 才开；与排气扇联动；固定 120s |
 | 出气风扇 | 3 | 12V | 与进气扇强制联动；固定 120s；夜间禁常规通风 |
 | 打氧泵 | 7 | 220V | 夜间禁常规开启；白天每小时前5分钟开60s；硬性截断 ≤300s |
@@ -112,10 +116,10 @@ streamlit run app.py
 ## 阶段进展
 
 - ✅ Phase 1：硬件全链路打通（环境传感器 + TDS/EC + USB摄像头 + 继电器）
-- ✅ Phase 2：LangGraph + Gemini AI 决策闭环（含安全保护：蠕动泵防烧苗 + 风扇联动 + 打氧静音 + 历史趋势注入）
-- 🔲 Phase 3：LightRAG 长期记忆（水培知识库 + 生长日记 + 异常条件分支路由）
-- 🔲 Phase 4：事件驱动（异常阈值主动触发，突破5分钟轮询）+ Streamlit 看板完善 + OBS 直播
-- 🔲 Phase 5：ReAct Tool Use，AI 升级为完全自主智能体
+- ✅ Phase 2：LangGraph AI 决策双脑闭环（Gemini 核心 + 硅基流动 Qwen 防崩溃退路，含防烧苗、光照风扇联动策略）
+- ✅ Phase 3：工业级大屏前端构建（Streamlit Bento UI 重构 + JS 异步响应注入 + 串口电磁抗干扰漂移自愈系统）
+- 🔲 Phase 4：LightRAG 长期记忆（水培知识库 + 生长日记 + 异常条件分支路由）
+- 🔲 Phase 5：ReAct Tool Use，突破定时轮询束缚，AI 升级为完全自主智能体
 
 ---
 *致敬 Sol 模式 🤖*

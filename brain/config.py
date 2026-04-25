@@ -38,10 +38,13 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 GEMINI_FLASH_MODEL = "gemini-3-flash-preview"  # 最新 Flash 预览版
 GEMINI_PRO_MODEL   = "gemini-3-pro-preview"    # 最新 Pro 预览版
 
+# ── 硅基流动 API (退路) ──────────────────────────────────
+SILICONFLOW_API_KEY = os.getenv("SILICONFLOW_API_KEY", "")
+
 # ── 采集与决策间隔（秒）─────────────────────────────────
-SENSOR_INTERVAL   = 60     # 传感器采集频率
-SNAPSHOT_INTERVAL = 300    # 摄像头快照频率
-AI_DECISION_INTERVAL = 300 # AI 决策频率
+SENSOR_INTERVAL   = 60      # 传感器采集频率
+SNAPSHOT_INTERVAL = 1800    # 摄像头快照频率 (30分钟)
+AI_DECISION_INTERVAL = 1800 # AI 决策频率 (30分钟)
 
 # ── 生长环境阈值 ─────────────────────────────────────────
 ENV_THRESHOLDS = {

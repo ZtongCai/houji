@@ -90,8 +90,8 @@ def read_sensors() -> dict:
             result = _air_sensor.parse_data(frame)
             if not result:
                 continue
-            # 过滤说明书中提到的异常帧 (温湿碳全为 0)
-            if result['Temp'] == 0.0 and result['Humi'] == 0.0 and result['CO2'] == 0:
+            # 过滤说明书中提到的异常帧 (由于传感器启动或误报，温度或湿度归零时均视为无效帧)
+            if result['Temp'] == 0.0 or result['Humi'] == 0.0:
                 continue
             data["temp"]     = result.get('Temp')
             data["humidity"] = result.get('Humi')

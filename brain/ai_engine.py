@@ -23,6 +23,7 @@ from config import (
     GEMINI_API_KEY, GEMINI_FLASH_MODEL,
     THOUGHT_LOG_PATH, SNAPSHOT_DIR,
     LIGHT_ON_HOUR, LIGHT_OFF_HOUR,
+    SILICONFLOW_API_KEY,
 )
 from sensor_logger import read_sensors, get_latest
 from serial_bridge import SerialBridge
@@ -42,12 +43,7 @@ class HoujiDecision(BaseModel):
     thought: str                 # AI 推理过程
     actions: list[RelayAction]   # 要执行的继电器动作列表
 
-# ── 全局 LLM 实例（模块加载一次，避免每次决策重建 HTTP client）────────
-_llm = ChatGoogleGenerativeAI(
-    model=GEMINI_FLASH_MODEL,
-    google_api_key=GEMINI_API_KEY,
-    temperature=0.3,
-).with_structured_output(HoujiDecision)
+
 
 # ── 系统提示词 ───────────────────────────────────────────
 SYSTEM_PROMPT = """你是"后稷"，一个专业的水培生菜 AI 农场主。
@@ -86,6 +82,7 @@ class HoujiState(TypedDict):
     thought: str
     actions: list[dict]
     results: list[dict]
+    model_used: str
 
 
 # ── 节点函数 ─────────────────────────────────────────────
@@ -119,14 +116,14 @@ def decide_node(state: HoujiState) -> HoujiState:
 2. 光照策略：设定白天为 {LIGHT_ON_HOUR}:00 到 {LIGHT_OFF_HOUR}:00。如果在规定白天时间内请保持灯常亮，夜间休息期务必关闭。
 3. 卧室静音打氧策略（继电器7，极其重要）：
    - 【夜间禁止】：为了不影响睡眠，夜间（{LIGHT_OFF_HOUR}:00 到次日 {LIGHT_ON_HOUR}:00），绝对禁止常规轮询开启打氧泵！
-   - 【白天低频】：白天期间，仅在每小时的前5分钟内（例如当前分钟数在 00~05 之间）开启打氧泵 60 秒。其余时间保持安静。
+   - 【白天低频】：白天光照期间，**每次你被唤醒执行决策时，都必须开启打氧泵（relay_id=7） 60 秒**。因为系统现在是每 30 分钟才轮询唤醒你一次，这是该半小时内植物唯一获得氧气的机会。60秒后底层会自动关停，无需担心。
 4. 视觉动态施肥策略（蠕动泵，继电器1）：
    - 必须先通过摄像头快照判断生菜当前的生长阶段。
    - 参考目标（当前传感器 `ec` 字段数值单位为 μS/cm，直接对齐官方说明书）：
      (1) 育苗期 (三四片真叶)：目标 EC 600 ~ 1000
      (2) 生长期 (旺盛生长)：目标 EC 1000 ~ 1500
      (3) 成熟期 (采摘前)：目标 EC 1300 ~ 1800
-   - 【极其严格的防烧苗铁律】：10 升水箱水少但母液极浓！如果你检测到 EC 低于目标下限，控制继电器1（蠕动泵）补液时，`duration_seconds` **必须严格限制在 1 到 3 秒之间**！宁可“蚂蚁搬家”、多等几个5分钟的巡检周期，也绝不允许一次开5秒以上导致浓度暴增烧苗！
+   - 【极其严格的防烧苗铁律】：10 升水箱水少但母液极浓！如果你检测到 EC 低于目标下限，控制继电器1（蠕动泵）补液时，`duration_seconds` **必须固定设为 2 秒，不得超过 2 秒**！宁可"蚂蚁搬家"、多等几个5分钟的巡检周期，也绝不允许一次加液过多导致浓度暴增烧苗！
    - 【强制联动搅拌】：无论白天还是深夜，只要你决定开启继电器1加液，你都必须**同时下发开启继电器7（打氧泵）60 秒的指令**！利用气泡的翻滚充当搅拌机，确保营养液迅速融开，防止局部浓度过高烧根。
 5. 进排气风扇联动通风策略（继电器2=进气, 继电器3=排气，极其重要）：
    - 【强制联动】：进气扇（relay_id=2）与排气扇（relay_id=3）必须同时开、同时关，严禁只开其中一个。
@@ -172,8 +169,79 @@ def decide_node(state: HoujiState) -> HoujiState:
             "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"}
         })
     
-    decision: HoujiDecision = _llm.invoke([HumanMessage(content=content)])
-    
+    # ── AI 模型请求与降级机制 (Fallback) ──
+    models_to_try = [
+        "gemini-3-pro-preview",
+        "gemini-3-flash-preview",
+        "gemini-2.5-pro",
+        "gemini-2.5-flash"
+    ]
+    decision = None
+    last_error = ""
+
+    for model_name in models_to_try:
+        try:
+            log.info(f"[决策] 尝试使用模型: {model_name}")
+            llm = ChatGoogleGenerativeAI(
+                model=model_name,
+                google_api_key=GEMINI_API_KEY,
+                temperature=0.3,
+                max_retries=1, # 减少单个模型重试次数，交给代码去降级
+            ).with_structured_output(HoujiDecision)
+            
+            decision: HoujiDecision = llm.invoke([HumanMessage(content=content)])
+            state["model_used"] = model_name
+            log.info(f"[决策] 模型 {model_name} 成功响应！")
+            break  # 成功拿到结果，跳出循环
+        except Exception as e:
+            last_error = str(e)
+            # 如果遇到 503 容量不足或者资源问题，捕获并尝试下一个
+            log.warning(f"[决策] ⚠️ 模型 {model_name} 失败 ({last_error})，即将降级...")
+            continue
+
+    if decision is None:
+        log.warning(f"[决策] ⚠️ 谷歌 Gemini 模型全军覆没，启动绝地求生退路：硅基流动 Qwen-397B...")
+        try:
+            from openai import OpenAI
+            client = OpenAI(
+                api_key=SILICONFLOW_API_KEY,
+                base_url="https://api.siliconflow.cn/v1"
+            )
+            # Qwen 是纯文本模型，如果在 API 里强塞图片会直接报 400 错误
+            # 所以只能把上面的系统提示词+传感器数据以纯文本打过去“盲评”
+            # 并强制要求只输出 JSON
+            text_prompt = content[0]["text"] + '\n\n【格式强制】你必须只能输出纯 JSON 数据，禁止包含其他字符：{"thought":"推理分析","actions":[{"relay_id":1,"state":0,"duration_seconds":0}]}'
+            
+            resp = client.chat.completions.create(
+                model="Qwen/Qwen3.5-397B-A17B",
+                messages=[
+                    {"role": "system", "content": "你被要求只能以 JSON 格式输出响应，不可以写 markdown，不可以写多余的开头结尾。"},
+                    {"role": "user", "content": text_prompt}
+                ]
+            )
+            raw_text = resp.choices[0].message.content.strip()
+            
+            # 手工剔除可能的 markdown 代码块 (大模型常犯的错)
+            if raw_text.startswith("```json"):
+                raw_text = raw_text.split("```json")[-1].split("```")[0].strip()
+            elif raw_text.startswith("```"):
+                raw_text = raw_text.split("```")[-1].split("```")[0].strip()
+                
+            parsed = json.loads(raw_text)
+            actions = [RelayAction(**a) for a in parsed.get("actions", [])]
+            decision = HoujiDecision(thought=parsed.get("thought", "Qwen盲答分析"), actions=actions)
+            state["model_used"] = "Qwen3.5-397B"
+            log.info("[决策] 硅基流动 Qwen 退路启动成功！(未参考快照)")
+        except Exception as qwen_e:
+            last_error = f"双系统崩溃: Google {last_error} | 硅基 Qwen {qwen_e}"
+            log.error(f"[决策] ❌ 所有底牌全部挂掉！最后错误: {last_error}")
+
+    if decision is None:
+        state["thought"] = f"全部模型崩溃导致无法决策，最近错误：{last_error}"
+        state["actions"] = []
+        state["model_used"] = "None"
+        return state
+
     state["thought"] = decision.thought
     state["actions"] = [a.model_dump() for a in decision.actions]
     log.info(f"[决策] 思考: {decision.thought}")
@@ -193,14 +261,25 @@ def execute_node(state: HoujiState) -> HoujiState:
     if _bridge is None:
         _bridge = SerialBridge()
 
-    # 硬性上限：蠕动泵≤30s，进排气扇≤300s（单次通风最多5分钟），其他≤300s
-    MAX_DURATION = {1: 30, 2: 300, 3: 300}
+    # 硬性上限：蠕动泵≤5s（Prompt层要求固定2s，此为最后防线），进排气扇≤300s，其他≤300s
+    MAX_DURATION = {1: 5, 2: 300, 3: 300}
 
     def _auto_off(rid: int, delay: float):
         """在后台线程中等待 delay 秒后关闭指定继电器"""
         time.sleep(delay)
         _bridge.send_command({"cmd": "relay", "id": rid, "state": 0})
         log.info(f"[执行] 继电器{rid} 定时到期，自动关闭")
+        # 向前台追记状态以抵消打开状态
+        try:
+            with open(THOUGHT_LOG_PATH, "a", encoding="utf-8") as f:
+                ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                f.write(f"\n{'='*60}\n")
+                f.write(f"[{ts}]\n")
+                f.write("模型: 系统底层定时器\n")
+                f.write(f"思考: 继电器{rid} ({delay}秒) 定时器到期，自动关闭。\n")
+                f.write(f"动作: [{{\"relay_id\": {rid}, \"state\": 0}}]\n")
+        except Exception as e:
+            log.error(f"写入定时器到期日志失败: {e}")
 
     results = []
     timers = []
@@ -232,12 +311,9 @@ def execute_node(state: HoujiState) -> HoujiState:
 
         results.append({"action": action, "resp": resp})
 
-    # 等待所有定时线程完成（最长 = max duration，而非各 duration 之和）
+    # 等待所有定时线程完成（改为不等待，让主进程立刻刷新日记给前端）
     if timers:
-        log.info(f"[执行] 等待所有定时动作完成，最长 {max_duration}s ...")
-        for t, _ in timers:
-            t.join()
-        log.info("[执行] 所有定时继电器已自动关闭")
+        log.info(f"[执行] 定时指令下发完毕，最长 {max_duration}s (后台线程并行执行中)")
 
     state["results"] = results
     return state
@@ -251,6 +327,7 @@ def log_node(state: HoujiState) -> HoujiState:
         f.write(f"[{ts}]\n")
         f.write(f"传感器: {json.dumps(state['sensor_data'], ensure_ascii=False)}\n")
         f.write(f"快照: {state['image_path']}\n")
+        f.write(f"模型: {state.get('model_used', 'Unknown')}\n")
         f.write(f"思考: {state['thought']}\n")
         f.write(f"动作: {json.dumps(state['actions'], ensure_ascii=False)}\n")
         f.write(f"回执: {json.dumps(state['results'], ensure_ascii=False)}\n")

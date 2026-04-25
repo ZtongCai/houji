@@ -58,15 +58,38 @@ def main():
                 log.error(f"[传感器] 采集异常: {e}")
             last_sensor = now
 
-        # 摄像头快照（每 5 分钟一次）
+        # 摄像头快照
         if now - last_snapshot >= SNAPSHOT_INTERVAL:
             log.info("[摄像头] 定时快照拍摄中...")
             try:
+                # ── 夜间「闪光灯」逻辑 ──
+                from datetime import datetime
+                from config import LIGHT_ON_HOUR, LIGHT_OFF_HOUR
+                from serial_bridge import SerialBridge
+                
+                hour = datetime.now().hour
+                is_night = (hour >= LIGHT_OFF_HOUR or hour < LIGHT_ON_HOUR)
+                bridge = None
+                
+                if is_night:
+                    log.info("[摄像头] 夜间全黑环境，开启补光灯充当闪光灯 (3秒预热)...")
+                    bridge = SerialBridge()
+                    bridge.send_command({"cmd": "relay", "id": 8, "state": 1})
+                    time.sleep(3) # 让摄像头的自动曝光和白平衡有时间适应强光
+
+                # 拍摄照片
                 snap_path = take_snapshot()
                 if snap_path:
                     log.info(f"[摄像头] 快照入库: {snap_path}")
+
+                # 拍完立马关灯
+                if is_night and bridge:
+                    log.info("[摄像头] 拍摄完成，恢复夜间熄灯静息状态。")
+                    bridge.send_command({"cmd": "relay", "id": 8, "state": 0})
+                    bridge.close()
+
             except Exception as e:
-                log.error(f"[摄像头] 拍摄异常: {e}")
+                log.error(f"[摄像头] 拍摄或补光异常: {e}")
             last_snapshot = now
 
         # AI 大模型决策（每 5 分钟一次，与快照同步）

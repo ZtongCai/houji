@@ -18,16 +18,16 @@
 
 | 模块 | 技术 | 状态 |
 |---|---|---|
-| 决策引擎 | LangGraph + Gemini Flash (多模态) | ✅ 已接入 |
-| 短期记忆 | SQLite (`houji.db`) | ✅ 已接入 |
-| 长期记忆 | LightRAG（水培知识库） | 🔲 Phase 3 |
+| 决策引擎 | LangGraph 双脑调度 (Gemini Flash + Qwen 退路) | ✅ 已实装 |
+| 短期记忆 | SQLite (`houji.db`) + 10队列趋势池 | ✅ 已实装 |
+| 长期记忆 | LightRAG（水培知识库） | 🔲 Phase 4 |
 
 ## 4. 看板与直播架构
 
 采用"局域网生产-消费解耦"模式：
 
 - **数据网关**：Pi 5 开启 Samba，将 `brain/data/` 映射为 Windows Z: 盘
-- **渲染看板**：Windows 端 Streamlit（`dashboard/Streamlit/app.py`）
+- **渲染看板**：Windows 端 Streamlit（`app.py`，原生 JS 异步时钟 + Bento UI 网格系统）
 - **直播推流**：OBS Studio 截屏 Streamlit 窗口
 
 ## 5. 工程原则

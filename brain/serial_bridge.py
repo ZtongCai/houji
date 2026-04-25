@@ -16,16 +16,22 @@ log = logging.getLogger("houji.serial")
 class SerialBridge:
     def __init__(self):
         self.ser = None
-        self._lock = threading.Lock()  # 防止多线程并发写串口
+        self._lock = threading.RLock()  # 防止多线程并发写串口
         self.connect()
 
     def connect(self):
-        """建立串口连接，失败时记录警告，不 exit"""
+        """建立串口连接，支持端口偏移自适应"""
+        import glob
+        # 很多时候继电器闭合瞬间的电磁干扰（EMI）会导致 Pico 闪断重启
+        # 重启后 Linux 经常把它的口分配成 ttyACM1 或 ttyACM2，导致写死的代码找不着
+        ports = glob.glob("/dev/ttyACM*") + glob.glob("/dev/ttyUSB*")
+        target_port = ports[0] if ports else SERIAL_PORT
+
         try:
-            self.ser = serial.Serial(SERIAL_PORT, SERIAL_BAUD, timeout=2)
-            log.info(f"[串口] 已连接 Pico ({SERIAL_PORT})")
+            self.ser = serial.Serial(target_port, SERIAL_BAUD, timeout=2)
+            log.info(f"[串口] 已连接 Pico ({target_port})")
         except Exception as e:
-            log.warning(f"[串口] 连接失败，继电器暂时不可用: {e}")
+            log.warning(f"[串口] 连接失败，无法打开口 {target_port} : {e}")
             self.ser = None
 
     def send_command(self, cmd: dict) -> dict | None:
@@ -40,8 +46,15 @@ class SerialBridge:
                 raw = self.ser.readline().decode().strip()
                 return json.loads(raw) if raw else None
             except Exception as e:
-                log.warning(f"[串口] 发送失败，尝试重连: {e}")
+                log.warning(f"[串口] 发送失败，尝试重连并重试: {e}")
                 self.connect()
+                if self.ser:
+                    try:
+                        self.ser.write((json.dumps(cmd) + "\n").encode())
+                        raw = self.ser.readline().decode().strip()
+                        return json.loads(raw) if raw else None
+                    except Exception as e2:
+                        log.error(f"[串口] 重连后重新发送仍然失败: {e2}")
                 return None
 
     def close(self):
