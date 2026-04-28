@@ -11,6 +11,17 @@ from pathlib import Path
 from datetime import datetime
 
 # ── 配置 ──────────────────
+import sys
+# 把上一级的上一级的 brain 加进环境路径好读取 config
+sys.path.append(str(Path(__file__).parent.parent.parent / "brain"))
+try:
+    from config import PLANTING_BATCH, PLANTING_START_DATE
+    start_dt = datetime.strptime(PLANTING_START_DATE, "%Y-%m-%d")
+    current_day = (datetime.now() - start_dt).days + 1
+    batch_info = f"批次: {PLANTING_BATCH} | Day {current_day}"
+except Exception as e:
+    batch_info = "初号机"
+
 def find_data_dir():
     candidates = [
         Path("/home/houjiagent/houji/brain/data"), 
@@ -166,7 +177,7 @@ st.markdown(f"""
     <div style="display:flex; justify-content:space-between; align-items:center; padding:10px 25px; color:#f4e4bc;">
         <div style="font-size:38px;">🌱 后稷 HOUJI--LLM AI驱动的水培生菜生命周期项目</div>
         <div style="font-size:22px;">
-            <span id="live-clock">{datetime.now().strftime("%Y-%m-%d %H:%M:%S")}</span> | 核心: Gemini/Qwen
+            {batch_info} | <span id="live-clock">{{datetime.now().strftime("%Y-%m-%d %H:%M:%S")}}</span> | 核心: Gemini/Qwen
         </div>
     </div>
 </div>

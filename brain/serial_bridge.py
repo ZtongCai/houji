@@ -44,7 +44,9 @@ class SerialBridge:
             try:
                 self.ser.write((json.dumps(cmd) + "\n").encode())
                 raw = self.ser.readline().decode().strip()
-                return json.loads(raw) if raw else None
+                if not raw:
+                    raise Exception("串口读取超时或 Pico 已假死 (返回值为空)")
+                return json.loads(raw)
             except Exception as e:
                 log.warning(f"[串口] 发送失败，尝试重连并重试: {e}")
                 self.connect()
@@ -52,7 +54,9 @@ class SerialBridge:
                     try:
                         self.ser.write((json.dumps(cmd) + "\n").encode())
                         raw = self.ser.readline().decode().strip()
-                        return json.loads(raw) if raw else None
+                        if not raw:
+                            raise Exception("重连后串口仍超时，目标未响应。")
+                        return json.loads(raw)
                     except Exception as e2:
                         log.error(f"[串口] 重连后重新发送仍然失败: {e2}")
                 return None

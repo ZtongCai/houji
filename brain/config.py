@@ -42,7 +42,7 @@ GEMINI_PRO_MODEL   = "gemini-3-pro-preview"    # 最新 Pro 预览版
 SILICONFLOW_API_KEY = os.getenv("SILICONFLOW_API_KEY", "")
 
 # ── 采集与决策间隔（秒）─────────────────────────────────
-SENSOR_INTERVAL   = 60      # 传感器采集频率
+SENSOR_INTERVAL   = 10      # 传感器采集频率 (现改为10秒)
 SNAPSHOT_INTERVAL = 1800    # 摄像头快照频率 (30分钟)
 AI_DECISION_INTERVAL = 1800 # AI 决策频率 (30分钟)
 
@@ -60,3 +60,7 @@ ENV_THRESHOLDS = {
 # ── 光照计划（24小时制）─────────────────────────────────
 LIGHT_ON_HOUR  = 6   # 开灯时间
 LIGHT_OFF_HOUR = 22  # 关灯时间
+
+# ── 种植批次与周期跟踪 ──────────────────────────────────
+PLANTING_BATCH = "HOUJI-V1"               # 种植批次编号
+PLANTING_START_DATE = "2026-04-27"      # 开始种植日期 (YYYY-MM-DD format)

@@ -13,11 +13,11 @@ def get_tds_reading():
     voltage = chan.voltage
     # 基于水温 25℃ 时的 TDS 经验估算公式
     if voltage < 0.1:
-        tds_value = 0
+        ec_value = 0
     else:
-        tds_value = (133.42 * voltage**3 - 255.86 * voltage**2 + 857.39 * voltage) * 0.5
+        ec_value = (133.42 * voltage**3 - 255.86 * voltage**2 + 857.39 * voltage)
         
-    return voltage, tds_value
+    return voltage, ec_value
 
 def run_test():
     print("--- [后稷项目] TDS 水质传感器 (ADS1115) 测试 ---")
@@ -25,8 +25,8 @@ def run_test():
     print("按 Ctrl+C 终止测试\n")
     try:
         while True:
-            voltage, tds = get_tds_reading()
-            print(f"探头实时读取 -> 电压: {voltage:.3f} V | TDS 浓度: {tds:.1f} ppm")
+            voltage, ec = get_tds_reading()
+            print(f"探头实时读取 -> 电压: {voltage:.3f} V | EC 值: {ec:.1f} μS/cm")
             time.sleep(1)
     except KeyboardInterrupt:
         print("\n\n✅ 测试由用户主动终止。")

@@ -265,10 +265,22 @@ def execute_node(state: HoujiState) -> HoujiState:
     MAX_DURATION = {1: 5, 2: 300, 3: 300}
 
     def _auto_off(rid: int, delay: float):
-        """在后台线程中等待 delay 秒后关闭指定继电器"""
+        """在后台线程中等待 delay 秒后关闭指定继电器。包含死磕容错机制。"""
         time.sleep(delay)
-        _bridge.send_command({"cmd": "relay", "id": rid, "state": 0})
-        log.info(f"[执行] 继电器{rid} 定时到期，自动关闭")
+        
+        success = False
+        for attempt in range(15):
+            resp = _bridge.send_command({"cmd": "relay", "id": rid, "state": 0})
+            if resp is not None and "ok" in str(resp).lower():
+                log.info(f"[执行] 继电器{rid} 定时到期，自动关闭 (尝试次数: {attempt+1})")
+                success = True
+                break
+            log.warning(f"[执行] 紧急！继电器{rid} 关闭指令丢失，Pico 疑似假死，2秒后死磕重试 ({attempt+1}/15)")
+            time.sleep(2)
+
+        if not success:
+            log.error(f"[执行] 🚨 致命错误：尝试 15 次后，继电器{rid} 依然无法关闭！可能已发生侧漏/物理损坏！")
+
         # 向前台追记状态以抵消打开状态
         try:
             with open(THOUGHT_LOG_PATH, "a", encoding="utf-8") as f:
@@ -276,7 +288,10 @@ def execute_node(state: HoujiState) -> HoujiState:
                 f.write(f"\n{'='*60}\n")
                 f.write(f"[{ts}]\n")
                 f.write("模型: 系统底层定时器\n")
-                f.write(f"思考: 继电器{rid} ({delay}秒) 定时器到期，自动关闭。\n")
+                if success:
+                    f.write(f"思考: 继电器{rid} ({delay}秒) 定时器到期，自动关闭。\n")
+                else:
+                    f.write(f"思考: 🚨 致命故障！底层串口彻底崩溃，无法关闭继电器{rid}，设备可能持续失控！\n")
                 f.write(f"动作: [{{\"relay_id\": {rid}, \"state\": 0}}]\n")
         except Exception as e:
             log.error(f"写入定时器到期日志失败: {e}")

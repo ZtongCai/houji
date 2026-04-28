@@ -4,7 +4,7 @@
 
 ![Dashboard Screenshot](docs/ScreenShot.png)
 
-🔗 **后稷 AI 全局监控看板 (实况)**: [https://d0b0db6.r7.vip.cpolar.cn](https://d0b0db6.r7.vip.cpolar.cn)
+🔗 **后稷 AI 全局监控看板 (实况)**: [https://houji.cpolar.io/](https://houji.cpolar.io/)
 
 ## 系统架构
 
