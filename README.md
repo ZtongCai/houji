@@ -11,7 +11,9 @@
 
 ### 第一期：生菜
 
-[▶️ 播放或下载种植视频（MP4，2.7 MB）](docs/videos/phase-1-lettuce.mp4)
+[![第一期生菜种植视频预览](docs/videos/phase-1-lettuce.gif)](docs/videos/phase-1-lettuce.mp4)
+
+[下载高清种植视频（MP4，2.7 MB）](docs/videos/phase-1-lettuce.mp4)
 
 ## 系统架构
 
