@@ -49,7 +49,7 @@ DB_PATH      = DATA_DIR / "houji.db"
 THOUGHT_LOG  = DATA_DIR / "thought.log"
 SNAPSHOT_DIR = DATA_DIR / "snapshots"
 
-st.set_page_config(page_title=f"HOUJI · {CROP_NAME}", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title=f"HOUJI · {CROP_NAME}", page_icon="\U0001F33F", layout="wide", initial_sidebar_state="collapsed")
 
 # ── 核心工具 ──────────────────
 def img_to_b64(path):
