@@ -2,6 +2,7 @@
 # 持续监听串口，解析 JSON 指令，驱动继电器
 import ujson
 import sys
+import time
 from machine import WDT
 from relay_driver import RelayDriver
 
@@ -16,8 +17,16 @@ wdt = WDT(timeout=8000)
 poll_obj = select.poll()
 poll_obj.register(sys.stdin, select.POLLIN)
 
+auto_off_timers = {}
+
 while True:
     wdt.feed()  # 每轮喂狗，保持正常运行
+    current_ticks = time.ticks_ms()
+    for rid in list(auto_off_timers):
+        if time.ticks_diff(current_ticks, auto_off_timers[rid]) >= 0:
+            relay.set(rid, 0)
+            del auto_off_timers[rid]
+
     # 每次轮询等 10ms，没有指令输入就立刻跳过，不妨碍执行后续的延时或其他异步任务
     if poll_obj.poll(10):
         # 从 Pi 5 读取一行 JSON 指令
@@ -32,9 +41,18 @@ while True:
                 relay_id = cmd.get("id", 0)
                 state    = cmd.get("state", 0)
                 relay.set(relay_id, state)
+                duration = cmd.get("duration", 0)
                 # 回执确认
+                if state == 1 and duration > 0:
+                    auto_off_timers[relay_id] = time.ticks_add(time.ticks_ms(), int(duration * 1000))
+                else:
+                    auto_off_timers.pop(relay_id, None)
+
                 sys.stdout.write(ujson.dumps({"status": "ok", "id": relay_id}) + "\n")
+
+            elif cmd.get("cmd") == "status":
+                state = relay.get_all_status()
+                sys.stdout.write(ujson.dumps({"status": "ok", "state": state}) + "\n")
         except Exception as e:
             # 忽略解析错误或者打印日志
             sys.stdout.write(ujson.dumps({"status": "error", "msg": str(e)}) + "\n")
-

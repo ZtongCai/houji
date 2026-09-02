@@ -1,0 +1,20 @@
+[Unit]
+Description=Houji cpolar public dashboard tunnel
+After=network-online.target houji-dashboard.service
+Wants=network-online.target
+PartOf=houji.target
+
+[Service]
+Type=simple
+User=houjiagent
+Group=houjiagent
+Environment=HOME=/home/houjiagent
+ExecStart=/usr/local/bin/cpolar http -config=/usr/local/etc/cpolar/cpolar.yml -region=cn -subdomain=houji 8501
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=20
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=houji.target

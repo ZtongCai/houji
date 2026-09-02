@@ -9,12 +9,14 @@ __pycache__/
 secrets.py
 venv/
 
-# 测试与调试脚本（不入库）
-test/
+# 测试生成物
+test/*.jpg
 
 # 运行时数据（不入库，通过 Samba 共享）
 brain/data/houji.db
-brain/data/thought.log
+brain/data/houji.db-*
+brain/data/hardware_status.json
+brain/data/thought.log*
 brain/data/houji.log
 brain/data/snapshots/
 brain/data/rag_store/
@@ -33,3 +35,21 @@ brain/data/rag_store/
 # 系统文件
 .DS_Store
 Thumbs.db
+
+# 本机临时诊断与实例备份
+/.codex_qwen_benchmark.py
+/_recent.txt
+/_run_install_plotly.py
+/_run_log.py
+/_run_test_proxy.py
+configs/instances/*.bak-*
+
+# 本机保留的旧原型与一次性脚本（不再进入仓库）
+/dashboard/React/
+/brain/rag_memory.py
+/brain/requirements.txt
+/dashboard/Streamlit/requirements.txt
+/_run_clear_db.py
+/_run_emergency_pump_off.py
+/_run_gemini_proxy.py
+/_run_pump_test.py

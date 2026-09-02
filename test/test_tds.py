@@ -1,23 +1,10 @@
+import sys
 import time
-import board
-import busio
-import adafruit_ads1x15.ads1115 as ADS
-from adafruit_ads1x15.analog_in import AnalogIn
+from pathlib import Path
 
-def get_tds_reading():
-    i2c = busio.I2C(board.SCL, board.SDA)
-    ads = ADS.ADS1115(i2c)
-    # 绕过常量定义，直接传入 0 表示 A0 通道
-    chan = AnalogIn(ads, 0)
-    
-    voltage = chan.voltage
-    # 基于水温 25℃ 时的 TDS 经验估算公式
-    if voltage < 0.1:
-        ec_value = 0
-    else:
-        ec_value = (133.42 * voltage**3 - 255.86 * voltage**2 + 857.39 * voltage)
-        
-    return voltage, ec_value
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "brain"))
+
+from tds_reader import read_tds
 
 def run_test():
     print("--- [后稷项目] TDS 水质传感器 (ADS1115) 测试 ---")
@@ -25,8 +12,8 @@ def run_test():
     print("按 Ctrl+C 终止测试\n")
     try:
         while True:
-            voltage, ec = get_tds_reading()
-            print(f"探头实时读取 -> 电压: {voltage:.3f} V | EC 值: {ec:.1f} μS/cm")
+            ec = read_tds()
+            print(f"EC: {ec:.1f} μS/cm" if ec is not None else "无有效 EC 读数")
             time.sleep(1)
     except KeyboardInterrupt:
         print("\n\n✅ 测试由用户主动终止。")

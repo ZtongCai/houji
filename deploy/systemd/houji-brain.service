@@ -1,0 +1,23 @@
+[Unit]
+Description=Houji brain sensor and AI service
+After=network-online.target
+Wants=network-online.target
+PartOf=houji.target
+
+[Service]
+Type=simple
+User=houjiagent
+Group=houjiagent
+SupplementaryGroups=dialout video i2c gpio
+WorkingDirectory=/home/houjiagent/houji
+EnvironmentFile=/home/houjiagent/houji/configs/instances/tomato-01.conf
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/home/houjiagent/houji/brain/venv/bin/python -u brain/main.py
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=20
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=houji.target

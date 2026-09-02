@@ -1,14 +1,26 @@
-"""
-后稷主控入口 (Pi 5)
-负责协调传感器采集、AI 决策、摄像头快照的主循环
-"""
-import time
+"""后稷主控入口：采集、快照、AI 分析与可选的安全控制。"""
+
+import json
 import logging
+import time
+from datetime import datetime
+
 from config import (
-    SENSOR_INTERVAL, SNAPSHOT_INTERVAL, AI_DECISION_INTERVAL, DATA_DIR
+    AI_DECISION_INTERVAL,
+    AI_ENABLED,
+    CAMERA_ENABLED,
+    CAMERA_FLASH_ENABLED,
+    CONTROL_ENABLED,
+    CROP_NAME,
+    DATA_DIR,
+    GROWTH_STAGE,
+    LIGHT_OFF_HOUR,
+    LIGHT_ON_HOUR,
+    RUN_MODE,
+    SENSOR_INTERVAL,
+    SNAPSHOT_INTERVAL,
 )
 
-# 配置日志：同时输出到控制台和独立的运行日志（不污染 AI thought.log）
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
@@ -19,91 +31,135 @@ logging.basicConfig(
 )
 log = logging.getLogger("houji")
 
-
-from sensor_logger import init_db, read_sensors, log_reading
-from camera import take_snapshot
 from ai_engine import run_cycle
+from camera import take_snapshot
+from sensor_logger import init_db, log_reading, read_sensors
+
+
+def _has_meaningful_sensor_data(data: dict) -> bool:
+    air_valid = any(data.get(key) is not None for key in ("temp", "humidity", "co2"))
+    ec = data.get("ec")
+    ec_valid = isinstance(ec, (int, float)) and not isinstance(ec, bool) and ec > 0
+    return air_valid or ec_valid
+
+
+def _write_hardware_status(relays=None, connected=False):
+    payload = {
+        "timestamp": time.time(),
+        "run_mode": RUN_MODE,
+        "connected": bool(connected),
+        "relays": relays or {},
+    }
+    with open(DATA_DIR / "hardware_status.json", "w", encoding="utf-8") as handle:
+        json.dump(payload, handle, ensure_ascii=False)
+
+
+def _update_hardware_status():
+    if not CONTROL_ENABLED:
+        _write_hardware_status(connected=False)
+        return
+
+    try:
+        from serial_bridge import SerialBridge
+
+        status = SerialBridge().query_status()
+        _write_hardware_status(relays=status, connected=status is not None)
+    except Exception as exc:
+        log.error(f"[状态] 获取底层硬件状态失败: {exc}")
+        _write_hardware_status(connected=False)
+
+
+def _capture_snapshot():
+    if not CAMERA_ENABLED:
+        return
+
+    hour = datetime.now().hour
+    is_night = hour >= LIGHT_OFF_HOUR or hour < LIGHT_ON_HOUR
+    bridge = None
+    flash_on = False
+    try:
+        if is_night and CONTROL_ENABLED and CAMERA_FLASH_ENABLED:
+            from serial_bridge import SerialBridge
+
+            bridge = SerialBridge()
+            resp = bridge.send_command({"cmd": "relay", "id": 8, "state": 1})
+            flash_on = bool(resp and resp.get("status") == "ok")
+            if flash_on:
+                time.sleep(3)
+
+        snap_path = take_snapshot()
+        if snap_path:
+            log.info(f"[摄像头] 快照入库: {snap_path}")
+    except Exception as exc:
+        log.error(f"[摄像头] 拍摄异常: {exc}")
+    finally:
+        if flash_on and bridge:
+            resp = bridge.send_command({"cmd": "relay", "id": 8, "state": 0})
+            if not resp or resp.get("status") != "ok":
+                log.error("[安全] 夜间临时补光灯关闭未获得有效回执")
+
 
 def main():
-    log.info("🌱 后稷启动 —— 水培生菜 AI 守护者上线")
-    
-    # 启动前初始化数据库表结构
-    init_db()
+    log.info(
+        "🌱 后稷启动 —— 作物=%s 阶段=%s 模式=%s",
+        CROP_NAME,
+        GROWTH_STAGE,
+        RUN_MODE,
+    )
+    if not CONTROL_ENABLED:
+        if AI_ENABLED:
+            log.warning("[安全] observe 模式：AI 仅分析，所有继电器动作均被执行层拦截")
+        else:
+            log.warning("[安全] observe 模式：AI 与继电器执行均已关闭")
 
-    last_sensor   = 0
-    last_snapshot = 0
-    last_ai       = 0
+    init_db()
+    _write_hardware_status(connected=False)
+
+    last_sensor = 0.0
+    last_snapshot = 0.0
+    last_ai = 0.0
 
     while True:
         now = time.time()
 
-        # 传感器采集（每分钟一次）
         if now - last_sensor >= SENSOR_INTERVAL:
-            log.info("[传感器] 正在采集环境数据...")
             try:
                 data = read_sensors()
-                log_reading(
-                    temp=data.get("temp"),
-                    humidity=data.get("humidity"),
-                    co2=data.get("co2"),
-                    ch2o=data.get("ch2o"),
-                    tvoc=data.get("tvoc"),
-                    pm25=data.get("pm25"),
-                    pm10=data.get("pm10"),
-                    ec=data.get("ec"),
-                    ph=data.get("ph")
-                )
-                log.info(f"[传感器] 入库成功: {data}")
-            except Exception as e:
-                log.error(f"[传感器] 采集异常: {e}")
+                if _has_meaningful_sensor_data(data):
+                    log_reading(
+                        temp=data.get("temp"),
+                        humidity=data.get("humidity"),
+                        co2=data.get("co2"),
+                        ch2o=data.get("ch2o"),
+                        tvoc=data.get("tvoc"),
+                        pm25=data.get("pm25"),
+                        pm10=data.get("pm10"),
+                        ec=data.get("ec"),
+                        ph=data.get("ph"),
+                    )
+                    log.info(f"[传感器] 有效数据已入库: {data}")
+                else:
+                    log.warning(f"[传感器] 全部读数无效，本轮不入库: {data}")
+            except Exception as exc:
+                log.error(f"[传感器] 采集异常: {exc}")
+
+            _update_hardware_status()
             last_sensor = now
 
-        # 摄像头快照
         if now - last_snapshot >= SNAPSHOT_INTERVAL:
-            log.info("[摄像头] 定时快照拍摄中...")
-            try:
-                # ── 夜间「闪光灯」逻辑 ──
-                from datetime import datetime
-                from config import LIGHT_ON_HOUR, LIGHT_OFF_HOUR
-                from serial_bridge import SerialBridge
-                
-                hour = datetime.now().hour
-                is_night = (hour >= LIGHT_OFF_HOUR or hour < LIGHT_ON_HOUR)
-                bridge = None
-                
-                if is_night:
-                    log.info("[摄像头] 夜间全黑环境，开启补光灯充当闪光灯 (3秒预热)...")
-                    bridge = SerialBridge()
-                    bridge.send_command({"cmd": "relay", "id": 8, "state": 1})
-                    time.sleep(3) # 让摄像头的自动曝光和白平衡有时间适应强光
-
-                # 拍摄照片
-                snap_path = take_snapshot()
-                if snap_path:
-                    log.info(f"[摄像头] 快照入库: {snap_path}")
-
-                # 拍完立马关灯
-                if is_night and bridge:
-                    log.info("[摄像头] 拍摄完成，恢复夜间熄灯静息状态。")
-                    bridge.send_command({"cmd": "relay", "id": 8, "state": 0})
-                    bridge.close()
-
-            except Exception as e:
-                log.error(f"[摄像头] 拍摄或补光异常: {e}")
+            _capture_snapshot()
             last_snapshot = now
 
-        # AI 大模型决策（每 5 分钟一次，与快照同步）
-        if now - last_ai >= AI_DECISION_INTERVAL:
-            log.info("[AI] 触发 LangGraph 决策周期...")
+        if AI_ENABLED and now - last_ai >= AI_DECISION_INTERVAL:
+            log.info("[AI] 触发分析周期（模式=%s）", RUN_MODE)
             try:
                 run_cycle()
-            except Exception as e:
-                log.error(f"[AI] 决策异常: {e}")
+            except Exception as exc:
+                log.error(f"[AI] 决策异常: {exc}")
             last_ai = now
 
-        time.sleep(5)
+        time.sleep(2)
 
 
 if __name__ == "__main__":
     main()
-

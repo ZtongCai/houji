@@ -37,7 +37,8 @@ def read_tds(temperature: float = 25.0) -> float | None:
     compensated_v = voltage / compensation
 
     if compensated_v < 0.1:
-        return 0.0
+        # 低于探头有效电压时视为“无有效读数”，不能把断线误作 EC=0。
+        return None
 
     # 该多项式的原始输出单位即为 μS/cm（DFRobot 官方公式，基准 25°C）
     # 注意：有些资料写的是先算 ppm 再 ×2，本质相同，此处省略中间步骤直接输出 EC

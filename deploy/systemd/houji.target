@@ -1,0 +1,7 @@
+[Unit]
+Description=Houji brain, dashboard, and public tunnel
+Wants=houji-brain.service houji-dashboard.service houji-cpolar.service
+After=network-online.target
+
+[Install]
+WantedBy=multi-user.target

@@ -29,5 +29,4 @@ for relay_id in ALL_RELAYS:
     print(f"  继电器 {relay_id} => OFF  |  Pico 回执: {resp}")
     time.sleep(0.1)  # 防止发送过快
 
-bridge.close()
 print("\n✅ 全部继电器已复位断开！")

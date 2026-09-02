@@ -14,8 +14,8 @@ class HoujiSensor:
             # 清空启动时的旧缓存
             self.ser.reset_input_buffer() 
         except Exception as e:
-            print(f"Serial connection failed: {e}")
-            exit(1)
+            self.ser = None
+            raise ConnectionError(f"无法连接环境传感器 {self.port}: {e}") from e
 
     def read_frame(self, timeout: float = 3.0):
         """精准捕获 17 字节的有效数据帧，超时返回 None"""

@@ -7,7 +7,12 @@
 import sqlite3
 import time
 import logging
-from config import DB_PATH
+from config import (
+    DB_PATH,
+    AIR_SENSOR_PORT,
+    AIR_SENSOR_BAUD,
+    TDS_COMPENSATION_TEMPERATURE_C,
+)
 
 # sensor_reader 是 brain/ 目录下的核心驱动模块，直接导入
 from sensor_reader import HoujiSensor
@@ -64,56 +69,82 @@ def get_latest(n=10) -> list[dict]:
     return [dict(r) for r in rows]
 
 
+def _valid_range(name, value, minimum, maximum):
+    """将协议合法但物理上明显无效的瞬时值转为缺失值。"""
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        log.warning(f"[传感器] {name} 非数值，已忽略: {value!r}")
+        return None
+    if minimum <= numeric <= maximum:
+        return value
+    log.warning(
+        f"[传感器] {name} 超出可信范围 {minimum}~{maximum}，已忽略: {value!r}"
+    )
+    return None
+
+
 def read_sensors() -> dict:
-    """从硬件读取传感器数值，整合环境与水质数据"""
+    """独立读取空气与 EC；任一传感器失败不遮蔽另一传感器结果。"""
     global _air_sensor
 
     data = {
         "temp": None, "humidity": None, "co2": None,
         "ch2o": None, "tvoc": None, "pm25": None, "pm10": None,
-        "ec": None,   # TDS 传感器读数 (μS/cm)，ADS1115 I2C
-        "ph": None    # TODO: 待接入 pH 传感器
+        "ec": None,
+        "ph": None,
     }
 
+    # ---- 1. UART 环境传感器 ----
     try:
-        # ---- 1. 读取环境 7 合 1 传感器（最多重试 3 次）----
         if _air_sensor is None:
-            _air_sensor = HoujiSensor(port='/dev/ttyAMA0', baudrate=9600)
+            _air_sensor = HoujiSensor(port=AIR_SENSOR_PORT, baudrate=AIR_SENSOR_BAUD)
             _air_sensor.connect()
 
+        air_read_ok = False
         for attempt in range(3):
             frame = _air_sensor.read_frame()
             if not frame:
-                log.warning(f"[传感器] 第 {attempt+1} 次未获取帧，重试中...")
+                log.warning(f"[传感器] 第 {attempt + 1} 次未获取帧，重试中...")
                 time.sleep(1)
                 continue
             result = _air_sensor.parse_data(frame)
             if not result:
                 continue
-            # 过滤说明书中提到的异常帧 (由于传感器启动或误报，温度或湿度归零时均视为无效帧)
-            if result['Temp'] == 0.0 or result['Humi'] == 0.0:
+
+            temperature = _valid_range("温度", result.get("Temp"), -40.0, 85.0)
+            humidity = _valid_range("湿度", result.get("Humi"), 0.1, 100.0)
+            if temperature is None or humidity is None:
                 continue
-            data["temp"]     = result.get('Temp')
-            data["humidity"] = result.get('Humi')
-            data["co2"]      = result.get('CO2')
-            data["ch2o"]     = result.get('CH2O')
-            data["tvoc"]     = result.get('TVOC')
-            data["pm25"]     = result.get('PM2.5')
-            data["pm10"]     = result.get('PM10')
-            break  # 成功就退出重试
 
-        # ---- 2. 读取 TDS 营养液传感器（ADS1115 I2C），ec 字段存 μS/cm ----
-        # 传入7合1实测温度做补偿，获取不到则默认 25°C
-        temp_for_tds = data["temp"] if data["temp"] is not None else 25.0
-        data["ec"] = read_tds(temperature=temp_for_tds)
+            data.update({
+                "temp": temperature,
+                "humidity": humidity,
+                "co2": _valid_range("CO2", result.get("CO2"), 250, 10000),
+                "ch2o": _valid_range("CH2O", result.get("CH2O"), 0, 10000),
+                "tvoc": _valid_range("TVOC", result.get("TVOC"), 0, 60000),
+                "pm25": _valid_range("PM2.5", result.get("PM2.5"), 0, 5000),
+                "pm10": _valid_range("PM10", result.get("PM10"), 0, 5000),
+            })
+            air_read_ok = True
+            break
 
-        # ---- 3. 预留：读取 pH 传感器 ----
-
-    except Exception as e:
-        log.error(f"[传感器] 读取失败: {e}")
-        if _air_sensor:
-            if _air_sensor.ser and _air_sensor.ser.is_open:
+        if not air_read_ok:
+            raise TimeoutError("连续 3 次未获得有效 UART 环境帧")
+    except Exception as exc:
+        log.error(f"[环境传感器] 读取失败: {exc}")
+        try:
+            if _air_sensor and _air_sensor.ser and _air_sensor.ser.is_open:
                 _air_sensor.ser.close()
-            _air_sensor = None
+        except Exception:
+            pass
+        _air_sensor = None
+
+    # ---- 2. EC/TDS ----
+    try:
+        data["ec"] = read_tds(temperature=TDS_COMPENSATION_TEMPERATURE_C)
+    except Exception as exc:
+        log.error(f"[EC传感器] 读取失败: {exc}")
+        data["ec"] = None
 
     return data

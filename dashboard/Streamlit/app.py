@@ -7,39 +7,49 @@ import json
 import sqlite3
 import base64
 import streamlit as st
+import pandas as pd
 from pathlib import Path
 from datetime import datetime
 
 # ── 配置 ──────────────────
 import sys
-# 把上一级的上一级的 brain 加进环境路径好读取 config
-sys.path.append(str(Path(__file__).parent.parent.parent / "brain"))
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+sys.path.append(str(PROJECT_ROOT / "brain"))
 try:
-    from config import PLANTING_BATCH, PLANTING_START_DATE
+    from config import (
+        CROP_NAME,
+        CURRENT_GROWTH_STAGE,
+        DATA_DIR as CONFIG_DATA_DIR,
+        EC_TARGET_MAX,
+        EC_TARGET_MIN,
+        GROWTH_STAGE,
+        INSTANCE_ID,
+        PLANTING_BATCH,
+        PLANTING_START_DATE,
+        RUN_MODE,
+        SENSOR_INTERVAL,
+    )
     start_dt = datetime.strptime(PLANTING_START_DATE, "%Y-%m-%d")
-    current_day = (datetime.now() - start_dt).days + 1
-    batch_info = f"批次: {PLANTING_BATCH} | Day {current_day}"
-except Exception as e:
-    batch_info = "初号机"
+    current_day = max(1, (datetime.now() - start_dt).days + 1)
+    batch_info = f"实例: {INSTANCE_ID} | 批次: {PLANTING_BATCH} | Day {current_day}"
+except Exception as exc:
+    CROP_NAME = "未知作物"
+    CURRENT_GROWTH_STAGE = {"label": "未知阶段"}
+    EC_TARGET_MIN = 0
+    EC_TARGET_MAX = 0
+    GROWTH_STAGE = "unknown"
+    INSTANCE_ID = "unknown"
+    RUN_MODE = "unknown"
+    SENSOR_INTERVAL = 10
+    CONFIG_DATA_DIR = PROJECT_ROOT / "brain" / "data"
+    batch_info = f"配置加载失败: {exc}"
 
-def find_data_dir():
-    candidates = [
-        Path("/home/houjiagent/houji/brain/data"), 
-        Path("Z:/brain/data"),      
-        Path(__file__).parent.parent.parent / "brain" / "data", 
-        Path("./brain/data"),       
-    ]
-    for d in candidates:
-        if d.exists() and (d / "houji.db").exists():
-            return d
-    return candidates[0]
-
-DATA_DIR = find_data_dir()
+DATA_DIR = Path(CONFIG_DATA_DIR)
 DB_PATH      = DATA_DIR / "houji.db"
 THOUGHT_LOG  = DATA_DIR / "thought.log"
 SNAPSHOT_DIR = DATA_DIR / "snapshots"
 
-st.set_page_config(page_title="HOUJI AI CENTER", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title=f"HOUJI · {CROP_NAME}", layout="wide", initial_sidebar_state="collapsed")
 
 # ── 核心工具 ──────────────────
 def img_to_b64(path):
@@ -49,7 +59,9 @@ def img_to_b64(path):
     except: return ""
 
 def load_farm_data():
-    conn = sqlite3.connect(DB_PATH)
+    if not DB_PATH.exists():
+        return {}
+    conn = sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True)
     try:
         row = conn.execute("SELECT * FROM sensor_readings ORDER BY timestamp DESC LIMIT 1").fetchone()
         if not row: return {}
@@ -58,37 +70,129 @@ def load_farm_data():
     except: return {}
     finally: conn.close()
 
-def load_farm_logs():
-    if not THOUGHT_LOG.exists(): return []
+def load_history_data(limit=None):
+    if not DB_PATH.exists():
+        return pd.DataFrame()
+    if limit is None:
+        limit = max(100, int(3 * 24 * 3600 / max(SENSOR_INTERVAL, 1)))
+    conn = sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True)
     try:
-        text = THOUGHT_LOG.read_text(encoding="utf-8")
-        sections = text.split("============================================================")
-        items = []
-        for s in reversed(sections):
-            s = s.strip()
-            if not s or "[" not in s: continue
-            lines = s.splitlines()
-            ts = s.split("]")[0].replace("[", "").split(" ")[1] if " " in s else "--:--"
-            thought, actions, model_name = "", [], "Gemini"
-            for l in lines:
-                if l.startswith("模型:"): model_name = l.replace("模型:", "").strip()
-                elif l.startswith("思考:"): thought = l.replace("思考:", "").strip()
-                elif l.startswith("动作:"): 
-                    try: actions = json.loads(l.replace("动作:", "").strip())
-                    except: actions = []
-            items.append({"ts": ts, "type": f"分析 | {model_name}", "content": thought, "color": "#2e5d9b"})
-            if actions:
-                names = {1: '养液泵', 2: '进风', 3: '出风', 7: '打氧', 8: '补光'}
-                msg_parts = []
-                for a in actions:
-                    r_id = a.get('relay_id', 0)
-                    state_str = 'ON' if a.get('state') else 'OFF'
-                    name_str = names.get(r_id, f"R{r_id}")
-                    msg_parts.append(f"{name_str} {state_str}")
-                msg = " | ".join(msg_parts)
-                items.append({"ts": ts, "type": "执行", "content": f"指令: {msg}", "color": "#348e3e"})
-        return items[:40]
-    except: return []
+        # 取过去 3 天 (1分钟1次大概4320次)
+        df = pd.read_sql_query("SELECT timestamp, temp, ec FROM sensor_readings ORDER BY timestamp DESC LIMIT ?", conn, params=(limit,))
+        df = df.sort_values("timestamp")
+        # 修复 1970 Bug: SQLite 存的是秒级浮点数时间戳，必须指定 unit='s'，并加上东八区时差
+        df['timestamp'] = pd.to_datetime(df['timestamp'], unit='s') + pd.Timedelta(hours=8)
+        df.set_index("timestamp", inplace=True)
+        # 按15分钟精细重采样取平均值，dropna 去除没有数据的时刻
+        df_hourly = df.resample('15min').mean().dropna().reset_index()
+        return df_hourly
+    except:
+        return pd.DataFrame()
+    finally:
+        conn.close()
+
+def load_daily_data():
+    if not DB_PATH.exists():
+        return pd.DataFrame()
+    conn = sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True)
+    try:
+        df = pd.read_sql_query("SELECT timestamp, temp, humidity, co2, ec FROM sensor_readings ORDER BY timestamp ASC", conn)
+        if df.empty: return pd.DataFrame()
+        df['timestamp'] = pd.to_datetime(df['timestamp'], unit='s') + pd.Timedelta(hours=8)
+        df.set_index("timestamp", inplace=True)
+        # 按天重采样取平均
+        df_daily = df.resample('1D').mean().dropna()
+        # 截取小数点并把列名换成中文方便显示
+        df_daily = df_daily.rename(columns={'temp': '温度(°C)', 'humidity': '湿度(%)', 'co2': 'CO2(ppm)', 'ec': '电导率'})
+        # 保留 datetime index，不再转成 string，以便图表引擎正确解析时间
+        df_daily.index.name = 'timestamp'
+        return df_daily
+    except:
+        return pd.DataFrame()
+    finally:
+        conn.close()
+
+def _load_jsonl_records(path):
+    records = []
+    try:
+        for line in reversed(path.read_text(encoding="utf-8").splitlines()):
+            try:
+                records.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+            if len(records) >= 20:
+                break
+    except (OSError, UnicodeError):
+        pass
+    return records
+
+def _load_legacy_records(path):
+    records = []
+    try:
+        blocks = path.read_text(encoding="utf-8").rsplit("=" * 60, 20)[-20:]
+    except (OSError, UnicodeError):
+        return records
+
+    labels = {
+        "???: ": "sensor_data",
+        "??: ": "image_path",
+        "??: ": "model",
+        "??: ": "thought",
+        "??: ": "actions",
+        "??: ": "results",
+    }
+    for block in blocks:
+        lines = block.strip().splitlines()
+        if not lines or not lines[0].startswith("["):
+            continue
+        record = {"ts": lines[0].strip("[]")}
+        current_key = None
+        for line in lines[1:]:
+            for label, key in labels.items():
+                if line.startswith(label):
+                    record[key] = line[len(label):]
+                    current_key = key
+                    break
+            else:
+                if current_key == "thought":
+                    record["thought"] += "\n" + line
+        try:
+            for key in ("sensor_data", "actions", "results"):
+                default = "{}" if key == "sensor_data" else "[]"
+                record[key] = json.loads(record.get(key, default))
+        except json.JSONDecodeError:
+            continue
+        records.append(record)
+    return records
+
+
+def load_farm_logs():
+    records = []
+    for legacy_log in sorted(DATA_DIR.glob("thought.log.legacy-*")):
+        records.extend(_load_legacy_records(legacy_log))
+    if THOUGHT_LOG.exists():
+        records.extend(_load_jsonl_records(THOUGHT_LOG))
+    records = sorted(records, key=lambda record: str(record.get("ts", "")), reverse=True)[:20]
+
+    items = []
+    names = {1: "养液泵", 2: "进风", 3: "出风", 7: "打氧", 8: "补光"}
+    for record in records:
+        ts = record.get("ts", "未知时间")
+        thought = str(record.get("thought", "")).replace("\n", "<br>")
+        model_name = record.get("model", "未知")
+        items.append({"ts": ts, "type": f"分析 | {model_name}", "content": thought, "color": "#2e5d9b"})
+        actions = record.get("actions") or []
+        if not actions:
+            continue
+        parts = []
+        for action in actions:
+            relay_id = action.get("relay_id", 0)
+            name = names.get(relay_id, f"R{relay_id}")
+            state = "ON" if action.get("state") else "OFF"
+            parts.append(f"{name} {state}")
+        action_type = "执行指令" if RUN_MODE == "control" else "AI 建议（已拦截）"
+        items.append({"ts": ts, "type": action_type, "content": f"动作: {' | '.join(parts)}", "color": "#348e3e"})
+    return items[:40]
 
 # ── 渲染核心 ──────────────────
 
@@ -97,6 +201,16 @@ data = load_farm_data()
 logs = load_farm_logs()
 snaps = sorted(SNAPSHOT_DIR.glob("*.jpg"))
 img_b64 = img_to_b64(snaps[-1]) if snaps else ""
+
+latest_ts = data.get("timestamp")
+if isinstance(latest_ts, (int, float)):
+    data_age_seconds = max(0, time.time() - latest_ts)
+else:
+    data_age_seconds = None
+is_fresh = data_age_seconds is not None and data_age_seconds <= max(60, SENSOR_INTERVAL * 3)
+mode_label = "控制模式" if RUN_MODE == "control" else "观察模式（继电器已禁用）"
+data_label = "数据实时" if is_fresh else "数据缺失或已过期"
+status_color = "#2e7d32" if is_fresh else "#b71c1c"
 
 # 注入 CSS
 st.markdown("""
@@ -175,36 +289,22 @@ st.markdown("""
 st.markdown(f"""
 <div class="p-card" style="background:#8b5a2b; margin-bottom:25px; height:auto;">
     <div style="display:flex; justify-content:space-between; align-items:center; padding:10px 25px; color:#f4e4bc;">
-        <div style="font-size:38px;">🌱 后稷 HOUJI--LLM AI驱动的水培生菜生命周期项目</div>
+        <div style="font-size:38px;">🌱 后稷 HOUJI · 水培{CROP_NAME}</div>
         <div style="font-size:22px;">
-            {batch_info} | <span id="live-clock">{{datetime.now().strftime("%Y-%m-%d %H:%M:%S")}}</span> | 核心: Gemini/Qwen
+            {batch_info} | {datetime.now().strftime("%Y-%m-%d %H:%M:%S")} | 模型: Qwen 3.7 Plus
         </div>
     </div>
 </div>
 """, unsafe_allow_html=True)
 
-import streamlit.components.v1 as components
-components.html("""
-<script>
-    // 在 iframe 内部获取父级窗口，突破 React 安全限制修改外部 DOM
-    const targetDoc = window.parent.document;
-    if(window.parent.houjiClockTimer) { clearInterval(window.parent.houjiClockTimer); }
-    
-    window.parent.houjiClockTimer = setInterval(function() {
-        var el = targetDoc.getElementById("live-clock");
-        if (el) {
-            var now = new Date();
-            var y = now.getFullYear();
-            var m = String(now.getMonth() + 1).padStart(2, '0');
-            var d = String(now.getDate()).padStart(2, '0');
-            var h = String(now.getHours()).padStart(2, '0');
-            var min = String(now.getMinutes()).padStart(2, '0');
-            var s = String(now.getSeconds()).padStart(2, '0');
-            el.innerText = y + "-" + m + "-" + d + " " + h + ":" + min + ":" + s;
-        }
-    }, 1000);
-</script>
-""", height=0)
+st.markdown(f"""
+<div style="background:{status_color}; color:white; padding:10px 18px; margin:-12px 0 20px 0;
+            font-family:monospace; border:3px solid #4a2e19;">
+    {mode_label} ｜ {data_label} ｜ 阶段：{CURRENT_GROWTH_STAGE['label']}
+    ｜ EC目标：{EC_TARGET_MIN:.0f}–{EC_TARGET_MAX:.0f} μS/cm
+</div>
+""", unsafe_allow_html=True)
+
 
 # ── 第 1 行：监控 (左) | 日志 (右) ──
 r1_c1, r1_c2 = st.columns(2)
@@ -229,7 +329,7 @@ with r1_c2:
         color = it.get("color", "")
         content = it.get("content", "")
         logs_html += f"<div class='log-row'><div style='font-size:14px; opacity:0.6;'>[{ts}]</div><div style='padding:4px 0;'><span style='color:{color}; font-weight:bold;'>[{ctype}] </span><span style='font-size:18px;'>{content}</span></div></div>"
-    
+
     st.markdown(f"""
     <div class="p-card" style="height: 466px;">
         <div class="p-header">🧠 AI 思考与决策日志</div>
@@ -250,45 +350,173 @@ with r2_c1:
     ]
     for k, v, u in sensors:
         metrics_html += f'<div class="m-box"><div class="m-title">{k}</div><div class="m-val">{v if v is not None else "--"}<span class="m-unit">{u}</span></div></div>'
-    
+
     st.markdown(f"""
-    <div class="p-card" style="height: 100%;">
+    <div class="p-card" style="height: auto; margin-bottom: 20px;">
         <div class="p-header">📊 传感器阵列</div>
         <div class="p-body"><div class="sensor-grid">{metrics_html}</div></div>
     </div>
     """, unsafe_allow_html=True)
 
-with r2_c2:
-    # 执行器方阵格式
-    def get_stat(keyword):
-        for l in logs[:8]:
-            if l['type'] == '执行' and keyword in l['content']:
-                return "act-on" if "ON" in l['content'] else ""
-        return ""
-
-    acts_html = f"""
-    <div class="act-grid">
-        <div class="act-cell {get_stat('补光')}"><div class="act-dot"></div><span>补光灯</span></div>
-        <div class="act-cell {get_stat('打氧')}"><div class="act-dot"></div><span>打氧水泵</span></div>
-        <div class="act-cell {get_stat('养液泵')}"><div class="act-dot"></div><span>营养液泵</span></div>
-        <div class="act-cell {get_stat('进风')}"><div class="act-dot"></div><span>进气风扇</span></div>
-        <div class="act-cell {get_stat('出风')}"><div class="act-dot"></div><span>排气风扇</span></div>
-    </div>
-    """
-    st.markdown(f"""
-    <div style="height: 100%; display: flex; flex-direction: column; gap: 20px;">
-        <div class="p-card" style="height: auto; margin-bottom: 0;">
-            <div class="p-header">⚙️ 执行器状态</div>
-            <div class="p-body">{acts_html}</div>
-        </div>
-        <div class="p-card" style="height: auto; margin-bottom: 0; margin-top: auto; padding: 12px 15px; display: flex; align-items: center; justify-content: flex-end; background-color: #8b5a2b; border-color: #4a2e19;">
-            <a href="https://github.com/ZtongCai/houji" target="_blank" style="color: #f4e4bc; font-weight: bold; text-decoration: none; font-size: 22px; display: inline-flex; align-items: center; gap: 10px;">
-                <svg height="26" width="26" viewBox="0 0 16 16" fill="#f4e4bc"><path fill-rule="evenodd" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"></path></svg>
-                Github: ZtongCai/houji
-            </a>
-        </div>
+    # ==== 历史趋势图 ====
+    # 用 p-card 做标题壳，图表自身背景色设为 #fcf5e5 完美融入
+    st.markdown("""
+    <div class="p-card" style="height: auto; padding-bottom: 0; margin-bottom: 0;">
+        <div class="p-header">📈 核心参数趋势 (近3天 · 15分钟精细聚合)</div>
     </div>
     """, unsafe_allow_html=True)
+
+    df_history = load_history_data()
+    if not df_history.empty:
+        import altair as alt
+
+        base = alt.Chart(df_history).encode(
+            x=alt.X('timestamp:T', title='时间',
+                    axis=alt.Axis(format='%m-%d %H:%M', labelColor='#4a2e19',
+                                  titleColor='#4a2e19', grid=False, labelAngle=-45))
+        )
+
+        line_temp = base.mark_line(color='#d63031', strokeWidth=3,
+                                   point=alt.OverlayMarkDef(color='#d63031', size=50)).encode(
+            y=alt.Y('temp:Q', title='温度 (°C)', scale=alt.Scale(zero=False),
+                    axis=alt.Axis(titleColor='#d63031', labelColor='#d63031',
+                                  gridColor='rgba(0,0,0,0.08)'))
+        )
+
+        line_ec = base.mark_line(color='#0984e3', strokeWidth=3,
+                                 point=alt.OverlayMarkDef(color='#0984e3', size=50)).encode(
+            y=alt.Y('ec:Q', title='电导率 (μS/cm)', scale=alt.Scale(zero=False),
+                    axis=alt.Axis(titleColor='#0984e3', labelColor='#0984e3', grid=False))
+        )
+
+        chart = alt.layer(line_temp, line_ec).resolve_scale(y='independent').properties(
+            height=330,
+            padding={'top': 18, 'left': 8, 'right': 8, 'bottom': 8}
+        )
+        # 关键：背景色与卡片体的黄纸色一致，视觉上无缝拼合
+        chart = chart.configure(background='#fcf5e5').configure_view(strokeWidth=0)
+
+        st.altair_chart(chart, use_container_width=True)
+    else:
+        st.markdown("<div style='color:#4a2e19; padding: 20px;'>暂无足够的历史数据...</div>", unsafe_allow_html=True)
+
+with r2_c2:
+    # 执行器方阵格式 (抛弃脆弱的日志解析，采用工业级闭环电平提取)
+    def get_stat(rid):
+        if RUN_MODE != "control":
+            return "", "未控制"
+        try:
+            with open(DATA_DIR / "hardware_status.json", "r", encoding="utf-8") as f:
+                st_data = json.load(f)
+            if not st_data.get("connected"):
+                return "", "未知"
+            relays = st_data.get("relays", {})
+            is_on = relays.get(str(rid)) == 1 or relays.get(rid) == 1
+            return ("act-on", "ON") if is_on else ("", "OFF")
+        except Exception:
+            return "", "未知"
+
+    def actuator_cell(rid, name):
+        css_class, status = get_stat(rid)
+        return (
+            f'<div class="act-cell {css_class}"><div class="act-dot"></div>'
+            f'<span>{name}</span><small>{status}</small></div>'
+        )
+
+    acts_html = '<div class="act-grid">' + ''.join([
+        actuator_cell(8, "补光灯"),
+        actuator_cell(7, "打氧水泵"),
+        actuator_cell(1, "营养液泵"),
+        actuator_cell(2, "进气风扇"),
+        actuator_cell(3, "排气风扇"),
+    ]) + '</div>'
+    st.markdown(f"""
+    <div class="p-card" style="height: auto; margin-bottom: 20px;">
+        <div class="p-header">⚙️ 执行器状态</div>
+        <div class="p-body">{acts_html}</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # ==== 宏观日均值走势图 ====
+    st.markdown("""
+    <div class="p-card" style="height: auto; padding-bottom: 0; margin-bottom: 0;">
+        <div class="p-header" style="margin-bottom: -8px;">📅 全周期宏观日志 (日均走势分析)</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    df_daily = load_daily_data()
+    if not df_daily.empty:
+        plot_df = df_daily.reset_index()
+        import altair as alt
+
+        # ── 关键 CSS：让图表容器背景色与图表本身相同，缝隙彻底不可见 ──
+        st.markdown("""
+        <style>
+        /* 让所有 VegaLite 图表的外层容器背景也变成黄纸色，从视觉上消除任何间隙 */
+        .element-container:has(.stVegaLiteChart) {
+            background-color: #fcf5e5 !important;
+            margin-top: 0 !important;
+            margin-bottom: 0 !important;
+            padding-top: 0 !important;
+            padding-bottom: 0 !important;
+        }
+        .stMarkdown + .element-container { margin-top: -10px !important; }
+        </style>
+        """, unsafe_allow_html=True)
+
+        metrics = [
+            ('温度(°C)',  '温度 (°C)',  '#d63031', False),
+            ('湿度(%)',   '湿度 (%)',   '#0984e3', False),
+            ('CO2(ppm)', 'CO2 (ppm)', '#00b894', False),
+            ('电导率',    'EC (μS/cm)','#6c5ce7', True),
+        ]
+
+        for y_col, label, color, show_x in metrics:
+            x_ax = (
+                alt.Axis(format='%m-%d', labelAngle=-30, labelColor='#4a2e19',
+                         grid=False, title=None, tickCount=7)
+                if show_x else
+                alt.Axis(labels=False, ticks=False, grid=False, title=None)
+            )
+            base = alt.Chart(plot_df).properties(height=78)
+
+            area = base.mark_area(color=color, opacity=0.3, interpolate='monotone').encode(
+                x=alt.X('timestamp:T', axis=x_ax),
+                y=alt.Y(f'{y_col}:Q', scale=alt.Scale(zero=False),
+                        axis=alt.Axis(title=label, titleColor=color, titleFontSize=11,
+                                      labelColor='#4a2e19', tickCount=3,
+                                      grid=True, gridColor='rgba(0,0,0,0.07)',
+                                      labelFontSize=10))
+            )
+            line = base.mark_line(color=color, strokeWidth=2, interpolate='monotone').encode(
+                x=alt.X('timestamp:T', axis=x_ax),
+                y=alt.Y(f'{y_col}:Q')
+            )
+            c = (
+                alt.layer(area, line)
+                .configure(background='#fcf5e5')
+                .configure_view(strokeWidth=0)
+            )
+            st.altair_chart(c, use_container_width=True)
+    else:
+        st.markdown("<div style='color:#4a2e19; padding:20px;'>暂无数据</div>", unsafe_allow_html=True)
+
+
+
+
+# ── 全宽底部 GitHub 条（在所有列之外独立渲染）──
+st.markdown("""
+<div style="background-color: #8b5a2b; border: 4px solid #4a2e19; padding: 12px 25px;
+            display: flex; align-items: center; justify-content: flex-end;
+            font-family: 'VT323', monospace; margin-top: 4px;">
+    <a href="https://github.com/ZtongCai/houji" target="_blank"
+       style="color: #f4e4bc; font-weight: bold; text-decoration: none;
+              font-size: 24px; display: inline-flex; align-items: center; gap: 12px;">
+        <svg height="28" width="28" viewBox="0 0 16 16" fill="#f4e4bc"><path fill-rule="evenodd" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"></path></svg>
+        Github: ZtongCai/houji
+    </a>
+</div>
+""", unsafe_allow_html=True)
 
 # 自动刷新
 time.sleep(30)

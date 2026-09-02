@@ -6,14 +6,14 @@ import time
 from datetime import datetime
 import cv2
 from pathlib import Path
-from config import SNAPSHOT_DIR
+from config import SNAPSHOT_DIR, CAMERA_INDEX
 
 def take_snapshot() -> Path | None:
     """拍摄一张快照，文件名为精确定时，返回文件路径"""
     time_str = datetime.now().strftime("%Y%m%d_%H%M%S")
     filename = SNAPSHOT_DIR / f"{time_str}.jpg"
 
-    cap = cv2.VideoCapture(0)
+    cap = cv2.VideoCapture(CAMERA_INDEX)
     try:
         if not cap.isOpened():
             print("[摄像头] 无法打开 USB 摄像头")

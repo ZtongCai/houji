@@ -50,3 +50,15 @@ class RelayDriver:
         off_val = 1 if ACTIVE_LOW else 0
         for pin in self.pins.values():
             pin.value(off_val)
+
+    def get_all_status(self):
+        """获取所有继电器的当前真实逻辑状态 (1=ON, 0=OFF)"""
+        status = {}
+        for rid, pin in self.pins.items():
+            val = pin.value()
+            if ACTIVE_LOW:
+                # 低电平触发：硬件为0表示开启(1)，硬件为1表示关闭(0)
+                status[str(rid)] = 1 if val == 0 else 0
+            else:
+                status[str(rid)] = 1 if val == 1 else 0
+        return status

@@ -1,0 +1,22 @@
+[Unit]
+Description=Houji local Streamlit dashboard
+After=network-online.target
+Wants=network-online.target
+PartOf=houji.target
+
+[Service]
+Type=simple
+User=houjiagent
+Group=houjiagent
+WorkingDirectory=/home/houjiagent/houji
+EnvironmentFile=/home/houjiagent/houji/configs/instances/tomato-01.conf
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/home/houjiagent/houji/brain/venv/bin/python -m streamlit run dashboard/Streamlit/app.py --server.address=0.0.0.0 --server.port=8501 --server.headless=true --browser.gatherUsageStats=false
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=20
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=houji.target
