@@ -6,6 +6,7 @@ import time
 import json
 import sqlite3
 import base64
+from html import escape
 import streamlit as st
 import pandas as pd
 from pathlib import Path
@@ -28,7 +29,13 @@ try:
         PLANTING_START_DATE,
         RUN_MODE,
         SENSOR_INTERVAL,
+        EC_TARGETS, CROP_PROFILE_NAME, GROWTH_STAGE_MODE, GROWTH_STATE_PATH,
     )
+    from vision import load_stage
+    stage_state = load_stage(GROWTH_STATE_PATH, PLANTING_BATCH, CROP_PROFILE_NAME, GROWTH_STAGE, EC_TARGETS)
+    active_stage = GROWTH_STAGE if GROWTH_STAGE_MODE == "manual" else stage_state["effective_stage"]
+    CURRENT_GROWTH_STAGE = EC_TARGETS[active_stage]
+    EC_TARGET_MIN, EC_TARGET_MAX = CURRENT_GROWTH_STAGE["min"], CURRENT_GROWTH_STAGE["max"]
     start_dt = datetime.strptime(PLANTING_START_DATE, "%Y-%m-%d")
     current_day = max(1, (datetime.now() - start_dt).days + 1)
     batch_info = f"实例: {INSTANCE_ID} | 批次: {PLANTING_BATCH} | Day {current_day}"
@@ -178,7 +185,20 @@ def load_farm_logs():
     names = {1: "养液泵", 2: "进风", 3: "出风", 7: "打氧", 8: "补光"}
     for record in records:
         ts = record.get("ts", "未知时间")
-        thought = str(record.get("thought", "")).replace("\n", "<br>")
+        thought = escape(str(record.get("thought", ""))).replace("\n", "<br>")
+        image_input = record.get("image_input") or {}
+        growth = record.get("growth") or {}
+        if image_input:
+            vision_status = "图片请求成功" if image_input.get("request_succeeded") else "视觉不可用"
+            detail = (
+                f"{vision_status} | 拍摄：{image_input.get('captured_at', '无')} | "
+                f"照片：{Path(image_input.get('path', '')).name} | "
+                f"识别阶段：{growth.get('stage', 'unknown')} | 生效阶段：{record.get('effective_stage', '未知')} | "
+                f"EC目标：{record.get('ec_target', {}).get('min', '?')}–{record.get('ec_target', {}).get('max', '?')} μS/cm | "
+                f"观察：{growth.get('condition', '')} | 证据：{'；'.join(growth.get('evidence', []))} | "
+                f"不确定项：{'；'.join(growth.get('uncertainty', []))} {image_input.get('error', '')}"
+            )
+            thought = escape(detail) + "<br>" + thought
         model_name = record.get("model", "未知")
         items.append({"ts": ts, "type": f"分析 | {model_name}", "content": thought, "color": "#2e5d9b"})
         actions = record.get("actions") or []

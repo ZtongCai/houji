@@ -65,9 +65,13 @@ QWEN_MODEL = os.getenv("QWEN_MODEL", "qwen3.7-plus")
 
 # ── 作物与营养液配置 ──────────────────────────────────────
 # 当前默认采用用户提供的“瓜果专用营养液 A+B”番茄标签。
-# 阶段必须由人工配置，禁止仅凭图片自动切换 EC 目标。
+# GROWTH_STAGE 是首次启动兜底；manual 模式时为人工覆盖。
 CROP_PROFILE_NAME = os.getenv("CROP_PROFILE", "tomato_fruit_ab").strip().lower()
 GROWTH_STAGE = os.getenv("GROWTH_STAGE", "seedling").strip().lower()
+GROWTH_STAGE_MODE = os.getenv("GROWTH_STAGE_MODE", "auto").strip().lower()
+if GROWTH_STAGE_MODE not in {"auto", "manual"}:
+    raise ValueError("GROWTH_STAGE_MODE 只能是 auto 或 manual")
+GROWTH_STATE_PATH = DATA_DIR / "growth_state.json"
 CROP_PROFILE = get_crop_profile(CROP_PROFILE_NAME)
 CURRENT_GROWTH_STAGE = get_growth_stage(CROP_PROFILE, GROWTH_STAGE)
 

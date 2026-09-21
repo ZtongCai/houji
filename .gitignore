@@ -53,3 +53,7 @@ configs/instances/*.bak-*
 /_run_emergency_pump_off.py
 /_run_gemini_proxy.py
 /_run_pump_test.py
+
+# 视觉阶段运行状态
+brain/data/growth_state.json
+brain/data/growth_state.tmp

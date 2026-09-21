@@ -90,6 +90,7 @@ def _capture_snapshot():
         snap_path = take_snapshot()
         if snap_path:
             log.info(f"[摄像头] 快照入库: {snap_path}")
+            return snap_path
     except Exception as exc:
         log.error(f"[摄像头] 拍摄异常: {exc}")
     finally:
@@ -146,14 +147,16 @@ def main():
             _update_hardware_status()
             last_sensor = now
 
-        if now - last_snapshot >= SNAPSHOT_INTERVAL:
-            _capture_snapshot()
+        ai_due = AI_ENABLED and now - last_ai >= AI_DECISION_INTERVAL
+        snapshot = None
+        if ai_due or now - last_snapshot >= SNAPSHOT_INTERVAL:
+            snapshot = _capture_snapshot()
             last_snapshot = now
 
-        if AI_ENABLED and now - last_ai >= AI_DECISION_INTERVAL:
+        if ai_due:
             log.info("[AI] 触发分析周期（模式=%s）", RUN_MODE)
             try:
-                run_cycle()
+                run_cycle(image_path=snapshot)
             except Exception as exc:
                 log.error(f"[AI] 决策异常: {exc}")
             last_ai = now

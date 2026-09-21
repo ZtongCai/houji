@@ -53,7 +53,7 @@ def get_crop_profile(profile_name: str) -> dict:
 
 
 def get_growth_stage(profile: dict, stage_name: str) -> dict:
-    """返回指定阶段配置，不允许 AI 靠图片自行改变阶段。"""
+    """返回指定阶段的固定 EC 目标；视觉结果只能选择阶段，不能改写数值。"""
     try:
         return profile["ec_targets"][stage_name]
     except KeyError as exc:

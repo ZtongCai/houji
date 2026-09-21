@@ -29,7 +29,8 @@ def take_snapshot() -> Path | None:
         if ret:
             # 旋转180度解决硬件倒置问题
             frame = cv2.flip(frame, -1)
-            cv2.imwrite(str(filename), frame)
+            if not cv2.imwrite(str(filename), frame):
+                raise OSError("快照写入失败")
             print(f"[摄像头] 快照拍摄完成: {filename}")
             return filename
         print("[摄像头] 捕捉画面失败")
