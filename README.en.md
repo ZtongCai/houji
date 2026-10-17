@@ -19,9 +19,9 @@
 
 ## System architecture
 
-![Houji AI hydroponics system architecture (Chinese)](docs/system-architecture.png)
+![Houji AI hydroponics system architecture](docs/system-architecture-en.png)
 
-> This diagram is an overview. Refer to the current configuration and the descriptions below for actual sampling intervals and implemented capabilities. The dashboard screenshot and architecture diagram are currently in Chinese.
+> This diagram is an overview. Refer to the current configuration and the descriptions below for actual sampling intervals and implemented capabilities. The dashboard screenshot is currently in Chinese.
 
 ## Core technology stack
 
