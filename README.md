@@ -1,5 +1,7 @@
 # 后稷 (Project Houji) 🌱
 
+**简体中文** | [English](README.en.md)
+
 > 一个在 50×50×100cm 密闭帐篷内运行的水培作物感知、AI 分析与安全控制项目。当前部署实例为番茄育苗期，实际运行模式以 `configs/instances/tomato-01.conf` 为准。
 
 ![Dashboard Screenshot](docs/ScreenShot.png)
