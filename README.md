@@ -19,7 +19,7 @@
 
 ## 系统架构
 
-![后稷 AI 自主水培生态系统架构图](docs/system-architecture.png)
+![后稷 AI 水培系统架构图](docs/system-architecture.png)
 
 > 架构示意图；实际采样周期和已实现能力以当前配置及下文说明为准。
 
